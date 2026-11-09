@@ -9,6 +9,8 @@ export interface ConfirmOptions {
   message?: ReactNode;
   /** The exact command that confirming runs. */
   command?: string;
+  /** Replaces "Runs in the <repo> checkout:" above the command, for actions that run no command. */
+  commandLabel?: string;
   /** Command output to show, e.g. of a dry run. */
   output?: string;
   confirmLabel?: string;
@@ -115,7 +117,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
           {command !== undefined && (
             <div>
               <Text size="sm" c="dimmed">
-                Runs in the {cfg.name} checkout:
+                {open?.type === "confirm" && open.o.commandLabel ? open.o.commandLabel : `Runs in the ${cfg.name} checkout:`}
               </Text>
               <Code block data-testid="dialog-command">
                 {command}

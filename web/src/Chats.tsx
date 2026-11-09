@@ -1,9 +1,11 @@
-import { Alert, Anchor, Badge, Button, Card, Code, Group, NativeSelect, Stack, Text, Textarea, TextInput, Title } from "@mantine/core";
+import { Alert, Anchor, Badge, Button, Card, Code, Group, NativeSelect, Stack, Text, Textarea, TextInput, Title, Tooltip } from "@mantine/core";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "./api";
 import { useChats, type ChatState } from "./chatStore";
 import { useConfig } from "./config";
+import { useDialogs } from "./dialogs";
 import { Markdown } from "./Markdown";
+import { SCROLL } from "./scroll";
 import { shortPath } from "./status";
 import { MODELS, PERMISSION_MODES, type ChatEvent, type ChatRow, type ChatStatus, type Model, type PermissionMode } from "./types";
 
@@ -19,7 +21,6 @@ const STATUS: Record<ChatStatus, [string, string]> = {
   error: ["error", "red"],
 };
 
-const live = (s: ChatStatus) => s !== "ended" && s !== "error";
 const when = (t: number) => (t ? new Date(t * 1000).toLocaleString() : "");
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -216,7 +217,8 @@ function Launch({ onDone }: { onDone: (id: string) => void }) {
 }
 
 function ChatPane({ r, onOpenPr }: { r: ChatRow; onOpenPr: (n: number) => void }) {
-  const { state } = useChats();
+  const { state, select, reload, forget } = useChats();
+  const { confirm } = useDialogs();
   const s = state(r.id);
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -274,6 +276,29 @@ function ChatPane({ r, onOpenPr }: { r: ChatRow; onOpenPr: (n: number) => void }
     }
   };
 
+  const remove = async () => {
+    const ok = await confirm({
+      title: `Delete chat "${r.title}"?`,
+      message: "This removes the chat and the console's event log for it (chats/registry.json entry and chats/<id>.jsonl). Claude Code's own saved session is not touched. It cannot be undone.",
+      command: `POST /api/chats/${r.id}/delete`,
+      commandLabel: "Sends to the console:",
+      confirmLabel: "Delete chat",
+      danger: true,
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      await api.deleteChat(r.id);
+      select(null);
+      forget(r.id);
+      await reload();
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const running = r.status === "running" || r.status === "permission" || r.status === "starting";
   return (
     <Card withBorder data-testid="chat-pane" className="chat-pane-card" ref={card} h={height ?? undefined}>
@@ -314,7 +339,7 @@ function ChatPane({ r, onOpenPr }: { r: ChatRow; onOpenPr: (n: number) => void }
         )}
         <Activity s={s} status={r.status} lastActivity={r.last_activity} />
         <Textarea
-          placeholder={live(r.status) ? "Message" : "Message (resumes the session)"}
+          placeholder={r.connected ? "Message" : "Message (resumes the session)"}
           value={text}
           onChange={(e) => setText(e.currentTarget.value)}
           onKeyDown={(e) => {
@@ -330,16 +355,23 @@ function ChatPane({ r, onOpenPr }: { r: ChatRow; onOpenPr: (n: number) => void }
             ⌘/Ctrl+Enter sends
           </Text>
           <Group gap="xs">
-            {!live(r.status) && (
+            {!r.connected && (
               <Button variant="default" size="xs" onClick={() => void act(() => api.resume(r.id))} disabled={busy} data-testid="chat-resume">
                 Resume
               </Button>
             )}
-            {live(r.status) && (
+            {r.connected && (
               <Button variant="default" size="xs" onClick={() => void act(() => api.end(r.id))} disabled={busy} data-testid="chat-end">
                 End session
               </Button>
             )}
+            <Tooltip label="End the session first" disabled={!r.connected}>
+              <span>
+                <Button color="red" variant="light" size="xs" onClick={() => void remove()} disabled={r.connected || busy} data-testid="chat-delete">
+                  Delete
+                </Button>
+              </span>
+            </Tooltip>
             <Button color="orange" variant="light" size="xs" onClick={() => void act(() => api.interrupt(r.id))} disabled={!running || busy} data-testid="chat-interrupt">
               Interrupt
             </Button>
@@ -352,9 +384,6 @@ function ChatPane({ r, onOpenPr }: { r: ChatRow; onOpenPr: (n: number) => void }
     </Card>
   );
 }
-
-/** Each chat's transcript position, kept across tab switches (the pane unmounts). */
-const SCROLL = new Map<string, { top: number; stick: boolean }>();
 
 function Stamp({ t }: { t: number }) {
   if (!t) return <span className="stamp" />;

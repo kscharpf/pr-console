@@ -99,6 +99,7 @@ class ChatPublic(TypedDict):
     permission_mode: str
     resume_id: str | None
     status: str
+    connected: bool
     last_activity: float
     pending: list[PendingPermission]
     last_event_id: int
@@ -180,6 +181,12 @@ class EventBuffer:
         self.events: list[Event] = list(events)
         self.next_id: int = (self.events[-1]["id"] + 1) if self.events else 1
         self.log_path = log_path
+        self.closed = False  # set under cond when the chat is deleted; waiters return at once
+
+    def close(self) -> None:
+        with self.cond:
+            self.closed = True
+            self.cond.notify_all()
 
     def append(self, kind: str, **fields: object) -> Event:
         with self.cond:
@@ -201,7 +208,7 @@ class EventBuffer:
     def after(self, last_id: int, timeout: float | None = None) -> list[Event]:
         """Events with id > last_id; waits up to `timeout` seconds for one if there are none."""
         with self.cond:
-            if timeout and not (self.events and self.events[-1]["id"] > last_id):
+            if timeout and not self.closed and not (self.events and self.events[-1]["id"] > last_id):
                 self.cond.wait(timeout)
             return [e for e in self.events if e["id"] > last_id]
 
@@ -280,12 +287,19 @@ class Chat:
         self.meta = meta
         self.buffer = buffer
         self.status = "ended"
+        self.starting = False  # set under the manager lock by launch/resume until _start has made the task
+        self.deleted = False
         # req_id -> (future, public payload); touched on the loop thread only
         self.pending: dict[str, tuple[asyncio.Future[bool], PendingPermission]] = {}
         self.pending_public: list[PendingPermission] = []  # copy for HTTP threads
         self.inbox: asyncio.Queue[Command] | None = None  # commands while live
         self.task: asyncio.Task[None] | None = None
         self.last_activity: float = buffer.events[-1]["t"] if buffer.events else meta["created"]
+
+    @property
+    def connected(self) -> bool:
+        """A session is starting or its task has not finished (status 'ended' can precede the disconnect)."""
+        return self.starting or (self.task is not None and not self.task.done())
 
     def set_status(self, s: str) -> None:
         if s != self.status:
@@ -301,6 +315,7 @@ class Chat:
         return {
             **self.meta,
             "status": self.status,
+            "connected": self.connected,
             "last_activity": self.last_activity,
             "pending": list(self.pending_public),
             "last_event_id": self.buffer.next_id - 1,
@@ -366,7 +381,7 @@ class ChatManager:
             return sorted((c.public() for c in self.chats.values()), key=lambda m: -m["created"])
 
     def _live_count(self) -> int:
-        return sum(1 for c in self.chats.values() if c.task is not None and not c.task.done())
+        return sum(1 for c in self.chats.values() if c.connected)
 
     def launch(self, cwd: str, prompt: str, model: str = "", permission_mode: str = "auto") -> ChatPublic:
         with self.lock:
@@ -383,9 +398,10 @@ class ChatManager:
                 "resume_id": None,
             }
             chat = Chat(meta, EventBuffer(self._log(cid)))
+            chat.starting = True
             self.chats[cid] = chat
             self._write_registry()
-        self._call(self._start(chat, prompt, resume=None))
+        self._start_chat(chat, prompt, None)
         return chat.public()
 
     def resume(self, cid: str, cwd: str | None = None, prompt: str | None = None) -> ChatPublic:
@@ -411,16 +427,23 @@ class ChatManager:
                         fh.write(json.dumps(ev) + "\n")
                 self.chats[cid] = chat
                 self._write_registry()
-            if chat.task is not None and not chat.task.done():
+            if chat.connected:
                 raise ChatError("this chat is already connected")
             if self._live_count() >= MAX_LIVE:
                 raise ChatError(f"{MAX_LIVE} sessions are connected; end one first")
-        self._call(self._start(chat, prompt, resume=chat.meta.get("resume_id") or cid))
+            chat.starting = True  # delete refuses until _start has made the task
+        self._start_chat(chat, prompt, chat.meta.get("resume_id") or cid)
         return chat.public()
+
+    def _start_chat(self, chat: Chat, prompt: str | None, resume: str | None) -> None:
+        try:
+            self._call(self._start(chat, prompt, resume))
+        finally:
+            chat.starting = False
 
     def send(self, cid: str, text: str) -> ChatPublic:
         chat = self.get(cid)
-        if chat.task is None or chat.task.done():
+        if not chat.connected:
             return self.resume(cid, prompt=text)
         self._call(self._command(chat, ("query", text)))
         return chat.public()
@@ -435,6 +458,27 @@ class ChatManager:
         chat = self.get(cid)
         if chat.task is not None and not chat.task.done():
             self._call(self._command(chat, ("end", None)))
+
+    def delete(self, cid: str) -> None:
+        """Forget a chat: drop it from the registry and remove its event log.
+
+        Only the console's own record goes. Claude Code's saved transcript belongs to the CLI and
+        stays, so the session can still be adopted again by its ID. A connected or starting chat
+        is refused. Everything happens under the lock that launch and resume use to claim a chat.
+        """
+        validate_session_id(cid)
+        with self.lock:
+            chat = self.get(cid)
+            if chat.connected:
+                raise ChatError("this chat is connected; end the session before deleting it")
+            try:
+                self._log(cid).unlink(missing_ok=True)
+            except OSError as e:
+                raise ChatError(f"could not remove the chat's log: {e}") from e
+            del self.chats[cid]
+            self._write_registry()
+            chat.deleted = True
+        chat.buffer.close()  # wakes event streams, and any that check later do not wait
 
     def decide(self, cid: str, req_id: object, allow: object) -> None:
         chat = self.get(cid)

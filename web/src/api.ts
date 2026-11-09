@@ -72,6 +72,7 @@ export const api = {
   send: (id: string, text: string) => call<ChatRow>(`/api/chats/${id}/send`, { text }),
   interrupt: (id: string) => call<{ ok: true }>(`/api/chats/${id}/interrupt`, {}),
   end: (id: string) => call<{ ok: true }>(`/api/chats/${id}/end`, {}),
+  deleteChat: (id: string) => call<{ ok: true }>(`/api/chats/${id}/delete`, {}),
   decide: (id: string, req_id: string, allow: boolean) => call<{ ok: true }>(`/api/chats/${id}/permission`, { req_id, allow }),
 };
 

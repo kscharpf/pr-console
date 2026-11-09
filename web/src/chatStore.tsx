@@ -1,6 +1,7 @@
 import { Button, Code, Group, Modal, ScrollArea, Stack, Text } from "@mantine/core";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, eventsUrl } from "./api";
+import { forgetScroll } from "./scroll";
 import type { ChatEvent, ChatRow, PendingPermission } from "./types";
 
 /** What the page knows of one chat. Kept per chat, so switching chats loses nothing. */
@@ -19,6 +20,8 @@ interface Store {
   select: (id: string | null) => void;
   state: (id: string) => ChatState;
   reload: () => Promise<void>;
+  /** Drop what the page holds of a deleted chat, so a chat re-adopted under the same ID starts clean. */
+  forget: (id: string) => void;
   /** Changes on every event, so the views re-render. */
   version: number;
 }
@@ -42,19 +45,28 @@ export function ChatsProvider({ children }: { children: ReactNode }) {
   const states = useRef(new Map<string, ChatState>());
   const lastRows = useRef("");
 
+  const forgetChat = useCallback((id: string) => {
+    states.current.delete(id);
+    forgetScroll(id);
+  }, []);
+
   const reload = useCallback(async () => {
     try {
       const r = await api.chats();
       const json = JSON.stringify(r);
       if (json !== lastRows.current) {
         lastRows.current = json;
+        // A chat gone from the list (deleted here or in another tab) must not keep its old events:
+        // the same ID can be adopted again, and its event ids start over.
+        const ids = new Set(r.map((x) => x.id));
+        for (const id of [...states.current.keys()]) if (!ids.has(id)) forgetChat(id);
         setRows(r);
       }
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, []);
+  }, [forgetChat]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount: reload sets state only after its await
@@ -71,6 +83,8 @@ export function ChatsProvider({ children }: { children: ReactNode }) {
     }
     return s;
   }, []);
+
+  const forget = forgetChat;
 
   // One stream at a time, for the chat on screen (browsers allow few connections per host).
   // It resumes after the last event this page has; EventSource's own reconnects send Last-Event-ID.
@@ -112,8 +126,8 @@ export function ChatsProvider({ children }: { children: ReactNode }) {
   }, [selected, state, reload]);
 
   const store = useMemo<Store>(
-    () => ({ rows, error, selected, select: setSelected, state, reload, version }),
-    [rows, error, selected, state, reload, version],
+    () => ({ rows, error, selected, select: setSelected, state, reload, forget, version }),
+    [rows, error, selected, state, reload, forget, version],
   );
 
   return (

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import subprocess
@@ -138,6 +139,26 @@ class Buffer(unittest.TestCase):
         self.assertEqual(kinds, ["text", "delta"])
         self.assertEqual(b.after(0)[-1]["id"], C.BUFFER_COMPACT + 2)
 
+    def test_close_wakes_a_waiting_stream_and_later_waits_return_at_once(self) -> None:
+        b = C.EventBuffer()
+        got: list[float] = []
+        t0 = time.monotonic()
+
+        def wait() -> None:
+            b.after(0, timeout=10)
+            got.append(time.monotonic() - t0)
+
+        th = threading.Thread(target=wait)
+        th.start()
+        time.sleep(0.1)
+        b.close()
+        th.join(5)
+        self.assertEqual(len(got), 1)
+        self.assertLess(got[0], 2)
+        t1 = time.monotonic()
+        self.assertEqual(b.after(0, timeout=10), [])  # closed before the wait: no 10 s timeout
+        self.assertLess(time.monotonic() - t1, 1)
+
     def test_tool_text_truncates(self) -> None:
         self.assertEqual(C.tool_text([{"type": "text", "text": "a"}, {"type": "image"}]), 'a\n{"type": "image"}')
         long = C.tool_text("x" * (C.MAX_TOOL_TEXT + 5))
@@ -171,6 +192,111 @@ class Registry(unittest.TestCase):
             self.assertEqual([(r["id"], r["status"], r["last_event_id"]) for r in rows], [(cid, "ended", 5)])
             with self.assertRaises(C.ChatError):
                 m.get("../evil")
+
+    def test_delete_forgets_an_ended_chat_and_refuses_a_connected_one(self) -> None:
+        with tempfile.TemporaryDirectory() as t:
+            cid, other = "1648822d-86eb-4655-bf84-6baf32bde3b6", "2648822d-86eb-4655-bf84-6baf32bde3b6"
+            meta = {"cwd": t, "created": 1.0, "title": "x", "model": "", "permission_mode": "default"}
+            Path(t, "registry.json").write_text(
+                json.dumps([{"id": cid, "resume_id": cid, **meta}, {"id": other, "resume_id": other, **meta}])
+            )
+            for i in (cid, other):
+                Path(t, f"{i}.jsonl").write_text(json.dumps({"id": 1, "t": 9.0, "kind": "user", "text": "hi"}) + "\n")
+            m = C.ChatManager(t, client_factory=no_client)
+
+            async def never() -> None:
+                await asyncio.sleep(60)
+
+            async def spawn() -> "asyncio.Task[None]":
+                return asyncio.ensure_future(never())
+
+            fut = asyncio.run_coroutine_threadsafe(spawn(), m.loop).result()  # stands in for a connected session
+            m.chats[other].task = fut
+            with self.assertRaises(C.ChatError):
+                m.delete(other)
+            # a connected session whose status reads "error" is still connected
+            m.chats[other].status = "error"
+            self.assertTrue(next(r for r in m.list() if r["id"] == other)["connected"])
+            with self.assertRaises(C.ChatError):
+                m.delete(other)
+            self.assertIn(other, [r["id"] for r in m.list()])
+            self.assertTrue(Path(t, f"{other}.jsonl").exists())
+
+            m.delete(cid)
+            self.assertEqual([r["id"] for r in m.list()], [other])
+            self.assertFalse(Path(t, f"{cid}.jsonl").exists())
+            saved = json.loads(Path(t, "registry.json").read_text())
+            self.assertEqual([e["id"] for e in saved], [other])
+            with self.assertRaises(C.ChatError):
+                m.delete(cid)  # already gone
+            with self.assertRaises(C.ChatError):
+                m.delete("../evil")
+            fut.cancel()
+            # a restart does not bring it back
+            again = C.ChatManager(t, client_factory=no_client)
+            self.assertEqual([r["id"] for r in again.list()], [other])
+
+    def test_delete_cannot_slip_between_resume_and_the_task_it_starts(self) -> None:
+        with tempfile.TemporaryDirectory() as t:
+            cid = "1648822d-86eb-4655-bf84-6baf32bde3b6"
+            Path(t, "registry.json").write_text(
+                json.dumps(
+                    [
+                        {
+                            "id": cid,
+                            "cwd": t,
+                            "created": 1.0,
+                            "title": "x",
+                            "model": "",
+                            "permission_mode": "default",
+                            "resume_id": cid,
+                        }
+                    ]
+                )
+            )
+            m = C.ChatManager(t, client_factory=no_client)
+            in_start, release = threading.Event(), threading.Event()
+
+            async def slow_start(*_args: object) -> None:
+                in_start.set()
+                while not release.is_set():  # the gap: resume has passed its checks, no task exists yet
+                    await asyncio.sleep(0.01)
+
+            m._start = slow_start  # type: ignore[method-assign,assignment]
+            t1 = threading.Thread(target=lambda: m.resume(cid, prompt="hi"))
+            t1.start()
+            self.assertTrue(in_start.wait(5))
+            with self.assertRaises(C.ChatError):
+                m.delete(cid)
+            self.assertTrue(m.list()[0]["connected"])
+            release.set()
+            t1.join(5)
+            self.assertFalse(m.chats[cid].starting)
+            self.assertEqual([r["id"] for r in m.list()], [cid])
+
+    def test_delete_flags_the_chat_so_streams_stop(self) -> None:
+        with tempfile.TemporaryDirectory() as t:
+            cid = "1648822d-86eb-4655-bf84-6baf32bde3b6"
+            Path(t, "registry.json").write_text(
+                json.dumps(
+                    [
+                        {
+                            "id": cid,
+                            "cwd": t,
+                            "created": 1.0,
+                            "title": "x",
+                            "model": "",
+                            "permission_mode": "default",
+                            "resume_id": cid,
+                        }
+                    ]
+                )
+            )
+            m = C.ChatManager(t, client_factory=no_client)
+            chat = m.get(cid)
+            m.delete(cid)
+            self.assertTrue(chat.deleted)
+            self.assertTrue(chat.buffer.closed)
 
 
 if __name__ == "__main__":

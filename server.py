@@ -785,7 +785,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         try:
             self.wfile.write(b"retry: 1000\n\n")
             self.wfile.flush()
-            while not STOPPING.is_set():  # bound: until the client goes away or the server stops
+            while (
+                not STOPPING.is_set() and not chat.deleted
+            ):  # until the client goes away, the server stops or the chat is deleted
                 evs = chat.buffer.after(last, timeout=15)
                 if not evs:
                     self.wfile.write(b": ping\n\n")
@@ -817,6 +819,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 given_cwd = C.validate_cwd(body["cwd"], chat_dirs()) if body.get("cwd") else None
                 first = C.validate_prompt(body["prompt"]) if body.get("prompt") else None
                 return self._send(200, CHATS.resume(cid, given_cwd, first))
+            d = CHAT_DELETE_RE.match(path)
+            if d:  # any id shape: a malformed one is a 400 from validation, not a 404
+                CHATS.delete(d.group(1))
+                return self._send(200, {"ok": True})
             m = CHAT_POST_RE.match(path)
             if m:
                 cid, verb = m.groups()
@@ -839,6 +845,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 MAX_BODY = 65536
 EVENTS_RE = re.compile(r"^/api/chats/([0-9a-f-]{36})/events$")
 CHAT_POST_RE = re.compile(r"^/api/chats/([0-9a-f-]{36})/(send|interrupt|end|permission)$")
+CHAT_DELETE_RE = re.compile(r"^/api/chats/([^/]+)/delete$")
 CHATS: "C.ChatManager | None" = None  # set by main() when claude-agent-sdk is installed
 CHATS_ERROR = "chats are off: install claude-agent-sdk in .venv (see README.md)"
 BRANCH_CACHE: dict[str, tuple[float, str]] = {}  # cwd -> (time, branch)
@@ -855,6 +862,7 @@ class ChatRow(TypedDict):
     permission_mode: str
     resume_id: str | None
     status: str
+    connected: bool
     last_activity: float
     pending: list["C.PendingPermission"]
     last_event_id: int
