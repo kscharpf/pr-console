@@ -6,10 +6,10 @@ A local web app to manage the pull requests of one GitHub repo from one place, a
 
 ## Setup
 
-Python 3.10 or later, in a virtualenv for the SDK:
+Python 3.11 or later (the config is read with `tomllib`), in a virtualenv for the SDK:
 
     python3 -m venv .venv
-    .venv/bin/pip install -r requirements.txt
+    .venv/bin/pip install -r requirements.txt -r requirements-dev.txt   # dev: mypy, for scripts/check
 
 Node 20 or later. The versions are pinned in `web/package-lock.json`.
 
@@ -26,6 +26,8 @@ The config may also come from `PR_CONSOLE_CONFIG`; there is no default. The serv
 Run with a Python without the SDK, the server works as before and the Chats view says that chats are off. Chats need the `claude` CLI to be logged in (the SDK runs its bundled CLI).
 
 It listens on 127.0.0.1 only and prints `open http://127.0.0.1:8765/?token=...`. Open that URL. The page keeps the token in `sessionStorage` for the tab, removes it from the address bar, and sends it in an `X-Token` header. The query token is accepted only on the first load of `/` and on the chat event streams (`EventSource` cannot send headers); the request log never contains a query. The page and every `/api` request need the token. The built assets under `/assets/` need none (they hold no secret); the server still checks their `Host` header and refuses any path outside `web/dist/assets/`. A reload of `/` without the token gets a 403 page whose `assets/unlock.js` re-enters with the token the tab kept; a new tab needs the printed URL. If `web/dist/index.html` is missing, the server falls back to the old page in `static/` if there is one, else answers 503 for the page. The CSP is `default-src 'self'`, so the UI uses no inline scripts or styles (Mantine's `AppShell`, modal scroll lock and colour-scheme transition guard inject `<style>` tags and are not used). The server also checks the `Host` header (against DNS rebinding) and, for POST, `Content-Type: application/json`. You can also fix the token with `PR_CONSOLE_TOKEN`. `gh` must be logged in.
+
+Checks: `scripts/check` runs mypy (strict, config in `pyproject.toml`), the unittest suite, `tsc -b`, `npm run build` and Playwright, stopping at the first failure; `scripts/check --quick` runs only the first three. `.github/workflows/check.yml` runs the same on push and pull request.
 
 Tests (no network):
 
@@ -51,7 +53,7 @@ One TOML file per repo, read with `tomllib`. `examples/aldis.toml` is the config
 | Key | Meaning |
 |---|---|
 | `name` | Shown in the confirmation ("Runs in the <name> checkout"); default: the name part of `gh_repo`. |
-| `repo` | The local checkout (`~` expanded). Required. |
+| `repo` | The local checkout. Required. `~` is expanded; a relative path is taken against the console's own directory (the one holding `server.py`), never the current directory or the config file's, so `../aldis` names a clone beside `pr-console/`. The result is made absolute, and the error for a missing directory names that path. |
 | `gh_repo` | `OWNER/NAME` on GitHub. Required. |
 | `[commands]` | Each command as an argument list with placeholders, run in `repo`. A relative program with a `/` resolves against `repo`; a bare name is looked up on `PATH`. |
 | `commands.dry_run_flag`, `commands.apply_flag` | What `{dry_run}` and `{apply}` expand to when set. |

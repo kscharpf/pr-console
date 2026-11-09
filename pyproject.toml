@@ -1,0 +1,4 @@
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["server.py", "chats.py", "parsers.py", "config.py", "tests", "web/tests"]

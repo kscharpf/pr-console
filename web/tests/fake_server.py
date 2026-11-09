@@ -10,6 +10,7 @@ import secrets
 import sys
 import tempfile
 import time
+from collections.abc import Iterable
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -19,7 +20,8 @@ import server  # noqa: E402
 NOW = time.time()
 
 
-def pr(n, title, verdict, reasons=(), labels=(), train=False, review="APPROVED", answered=True):
+def pr(n: int, title: str, verdict: str, reasons: Iterable[str] = (), labels: Iterable[str] = (),
+       train: bool = False, review: str = "APPROVED", answered: bool = True) -> server.PrRow:
     branch = f"train/2026-11-08-{n}" if train else f"m3/wp-{n}"
     return {
         "number": n, "title": title, "branch": branch, "scope": branch.split("/")[0] + "/",
@@ -42,7 +44,7 @@ PRS = [
     pr(101, "feat(m3/wp-3a): first", "READY FOR TRAIN"),
 ]
 
-SESSIONS = {
+SESSIONS: server.SessionsView = {
     "groups": {
         "main checkout": [{
             "path": "/repo", "head": "aaa", "branch": "main", "detached": False, "bare": False,
@@ -60,21 +62,20 @@ SESSIONS = {
 }
 
 
-def fake_start_job(key, argv):
+def fake_start_job(key: server.JobKey, argv: list[str]) -> server.Job:
     with server.JOBS_LOCK:
         jid = secrets.token_hex(6)
         out = [f"fake run of {' '.join(argv)}"]
         if "cleanup-merged" in argv[0] and "--apply" not in argv:
             out.append("would remove worktree /repo/.claude/worktrees/agent-1 and branch m3/wp-done")
-        job = {"id": jid, "key": key, "argv": argv, "started": time.time(), "output": out,
+        job: server.Job = {"id": jid, "key": key, "argv": argv, "started": time.time(), "output": out,
                "exit": 0, "ended": time.time()}
         server.JOBS[jid] = job
-    server.log_action({k: job[k] for k in ("id", "key", "argv", "started", "ended", "exit")}
-                      | {"output_tail": out})
+    server.log_action(server.job_record(job) | {"output_tail": out})
     return job
 
 
-def main():
+def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8798)
     ap.add_argument("--chats-dir", default=None, help="keep chats here (to test a restart)")
@@ -84,17 +85,19 @@ def main():
     cfg = config.load(a.config)
     server.use_config(cfg)
     log = Path(tempfile.mkdtemp(prefix="pr-console-test-")) / "actions.jsonl"
-    server.CONFIG.update(port=a.port, log_file=str(log))
+    server.CONFIG["port"] = a.port
+    server.CONFIG["log_file"] = str(log)
     server.TOKEN = "test-token"
-    server.CACHE.data.update(prs=PRS, fetched_at=NOW, error=None, refreshing=False)
-    server.CACHE.open_numbers = lambda: {p["number"] for p in PRS}
-    server.CACHE.refresh = lambda: None
+    server.CACHE.data = {"prs": PRS, "fetched_at": NOW, "error": None, "refreshing": False}
+    server.CACHE.open_numbers = lambda: {p["number"] for p in PRS}  # type: ignore[method-assign]  # the fake replaces gh
+    server.CACHE.refresh = lambda: None  # type: ignore[method-assign]  # the fake never calls gh
     server.sessions = lambda: SESSIONS
     server.start_job = fake_start_job
     # Chats: the real ChatManager and SDK client over a fake CLI transport, in scratch directories.
+    import chats
     import fake_sdk
     work = Path(a.chats_dir or tempfile.mkdtemp(prefix="pr-console-chats-"))
-    dirs = []
+    dirs: list[chats.ChatDir] = []
     for name, branch, is_main in (("main", "main", True), ("wt-102", "m3/wp-102", False)):
         (work / "dirs" / name).mkdir(parents=True, exist_ok=True)
         dirs.append({"path": str(work / "dirs" / name), "branch": branch, "is_main": is_main})

@@ -17,53 +17,58 @@ import asyncio
 import json
 import os
 import uuid
+from collections.abc import AsyncIterator
+from typing import Any
 
-from claude_agent_sdk import ClaudeSDKClient
+from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from claude_agent_sdk._internal.transport import Transport
 
+# A stream-json message of the CLI protocol; Transport types them as dict[str, Any].
+Msg = dict[str, Any]
 
-def make_client(options):
+
+def make_client(options: ClaudeAgentOptions) -> ClaudeSDKClient:
     return ClaudeSDKClient(options, transport=FakeTransport(options))
 
 
 class FakeTransport(Transport):
-    def __init__(self, options):
+    def __init__(self, options: ClaudeAgentOptions) -> None:
         self.options = options
         self.session_id = options.resume or options.session_id or str(uuid.uuid4())
-        self.out = asyncio.Queue()
+        self.out: asyncio.Queue[Msg | None] = asyncio.Queue()
         self.ready = False
-        self.waiting = {}        # request_id -> Future for our can_use_tool requests
-        self.turn = None
+        self.waiting: dict[str, asyncio.Future[Msg]] = {}  # request_id -> our can_use_tool requests
+        self.turn: asyncio.Task[None] | None = None
         self.interrupted = asyncio.Event()
 
-    async def connect(self):
+    async def connect(self) -> None:
         self.ready = True
 
-    def is_ready(self):
+    def is_ready(self) -> bool:
         return self.ready
 
-    async def end_input(self):
+    async def end_input(self) -> None:
         pass
 
-    async def close(self):
+    async def close(self) -> None:
         self.ready = False
         if self.turn:
             self.turn.cancel()
         await self.out.put(None)
 
-    async def read_messages(self):
+    async def read_messages(self) -> AsyncIterator[Msg]:
         while True:  # bound: until close() queues None
             m = await self.out.get()
             if m is None:
                 return
             yield m
 
-    async def write(self, data):
+    async def write(self, data: str) -> None:
         for line in data.splitlines():
             if line.strip():
                 await self._handle(json.loads(line))
 
-    async def _handle(self, m):
+    async def _handle(self, m: Msg) -> None:
         t = m.get("type")
         if t == "control_request":
             req = m["request"]
@@ -83,34 +88,35 @@ class FakeTransport(Transport):
 
     # -- replies
 
-    def _asst(self, *blocks):
+    def _asst(self, *blocks: Msg) -> Msg:
         return {"type": "assistant", "session_id": self.session_id, "uuid": str(uuid.uuid4()),
                 "message": {"id": "msg_" + os.urandom(4).hex(), "model": "fake-model", "role": "assistant",
                             "content": list(blocks)}}
 
-    def _tool_result(self, tid, text, err=False):
+    def _tool_result(self, tid: str, text: str, err: bool = False) -> Msg:
         return {"type": "user", "session_id": self.session_id, "uuid": str(uuid.uuid4()),
                 "message": {"role": "user", "content": [
                     {"type": "tool_result", "tool_use_id": tid, "content": text, "is_error": err}]}}
 
-    def _delta(self, text):
+    def _delta(self, text: str) -> Msg:
         return {"type": "stream_event", "uuid": str(uuid.uuid4()), "session_id": self.session_id,
                 "event": {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": text}}}
 
-    def _result(self, subtype="success", is_error=False, reason="completed", result="done"):
+    def _result(self, subtype: str = "success", is_error: bool = False, reason: str = "completed",
+                result: str | None = "done") -> Msg:
         return {"type": "result", "subtype": subtype, "duration_ms": 5, "duration_api_ms": 1, "is_error": is_error,
                 "num_turns": 1, "session_id": self.session_id, "total_cost_usd": 0.0, "result": result,
                 "terminal_reason": reason}
 
-    async def _ask(self, tid, name, inp):
+    async def _ask(self, tid: str, name: str, inp: Msg) -> Msg:
         rid = "req_" + os.urandom(4).hex()
-        fut = asyncio.get_running_loop().create_future()
+        fut: asyncio.Future[Msg] = asyncio.get_running_loop().create_future()
         self.waiting[rid] = fut
         await self.out.put({"type": "control_request", "request_id": rid, "request": {
             "subtype": "can_use_tool", "tool_name": name, "input": inp, "tool_use_id": tid}})
         return await fut
 
-    async def _turn(self, prompt):
+    async def _turn(self, prompt: str) -> None:
         put = self.out.put
         await put({"type": "system", "subtype": "init", "session_id": self.session_id, "model": "fake-model",
                    "permissionMode": self.options.permission_mode, "cwd": str(self.options.cwd)})

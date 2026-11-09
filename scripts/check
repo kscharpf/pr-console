@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Run every check, in order, stopping at the first failure:
+#   mypy, unittest, tsc -b, npm run build, Playwright.
+# --quick runs only mypy, unittest and tsc -b.
+set -euo pipefail
+
+quick=0
+case "${1:-}" in
+  "") ;;
+  --quick) quick=1 ;;
+  *) echo "usage: scripts/check [--quick]" >&2; exit 2 ;;
+esac
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$root"
+py="${PYTHON:-$root/.venv/bin/python}"
+
+step() { printf '\n== %s\n' "$*"; }
+
+step mypy
+"$py" -m mypy
+step unittest
+"$py" -m unittest discover -s tests
+step "tsc -b"
+(cd web && npx tsc -b)
+if [ "$quick" -eq 1 ]; then
+  printf '\ncheck: quick passed (mypy, unittest, tsc)\n'
+  exit 0
+fi
+step "npm run build"
+(cd web && npm run build)
+step playwright
+(cd web && npx playwright test)
+printf '\ncheck: passed (mypy, unittest, tsc, build, playwright)\n'

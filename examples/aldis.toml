@@ -1,6 +1,6 @@
 # PR console config for the Aldis repo (github.com/kscharpf/aldis). See README.md, "Config".
 name = "Aldis"
-repo = "~/school/ccsds/code"
+repo = "../aldis"
 gh_repo = "kscharpf/aldis"
 
 [commands]

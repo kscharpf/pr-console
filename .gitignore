@@ -2,3 +2,4 @@ __pycache__/
 actions.jsonl
 chats/
 .venv/
+.mypy_cache/
