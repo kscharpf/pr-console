@@ -247,16 +247,19 @@ function ChatPane({ r, onOpenPr }: { r: ChatRow; onOpenPr: (n: number) => void }
   const stick = useRef(true); // follow new output unless the reader has scrolled up
   const lastTop = useRef(0); // scrollTop after our own scroll, to tell the reader's scrolls from ours
 
+  // Leaving the tab unmounts the pane; restore each chat's place when it comes back.
   useEffect(() => {
-    stick.current = true;
+    const saved = SCROLL.get(r.id);
+    stick.current = saved?.stick ?? true;
+    lastTop.current = saved?.top ?? 0;
   }, [r.id]);
   useEffect(() => {
     const el = box.current;
-    if (el && stick.current) {
-      el.scrollTop = el.scrollHeight; // scroll the transcript only, never the page
-      lastTop.current = el.scrollTop;
-    }
-  }, [r.id, s.events.length, s.draft]);
+    if (!el || height === null) return; // not scrollable until the pane has its measured height
+    if (stick.current) el.scrollTop = el.scrollHeight; // scroll the transcript only, never the page
+    else el.scrollTop = SCROLL.get(r.id)?.top ?? el.scrollTop;
+    lastTop.current = el.scrollTop;
+  }, [r.id, s.events.length, s.draft, height]);
 
   const act = async (f: () => Promise<unknown>, clear = false) => {
     setBusy(true);
@@ -299,6 +302,7 @@ function ChatPane({ r, onOpenPr }: { r: ChatRow; onOpenPr: (n: number) => void }
             if (el.scrollHeight - el.scrollTop - el.clientHeight < 40) stick.current = true;
             else if (el.scrollTop < lastTop.current - 2) stick.current = false;
             lastTop.current = el.scrollTop;
+            SCROLL.set(r.id, { top: el.scrollTop, stick: stick.current });
           }}
         >
           <Transcript s={s} />
@@ -348,6 +352,9 @@ function ChatPane({ r, onOpenPr }: { r: ChatRow; onOpenPr: (n: number) => void }
     </Card>
   );
 }
+
+/** Each chat's transcript position, kept across tab switches (the pane unmounts). */
+const SCROLL = new Map<string, { top: number; stick: boolean }>();
 
 function Stamp({ t }: { t: number }) {
   if (!t) return <span className="stamp" />;

@@ -320,3 +320,22 @@ test("messages show their time, and a running turn shows how long it has worked"
   await expect(times.first()).toHaveText(/^\d{1,2}:\d{2}:\d{2}/);
   expect(ctx.errors).toEqual([]);
 });
+
+test("switching tabs and back keeps the chat's place: the bottom when following, else where the reader was", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  const ctx = await open(page);
+  await launch(page, "long");
+  const t = () => pane(page).getByTestId("transcript");
+  const gap = () => t().evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight);
+  await expect.poll(gap).toBeLessThan(2);
+
+  await page.getByRole("tab", { name: "All PRs" }).click();
+  await page.getByRole("tab", { name: "Chats" }).click();
+  await expect.poll(gap).toBeLessThan(2); // following: back at the bottom
+
+  await t().evaluate((el) => { el.scrollTop = 300; el.dispatchEvent(new Event("scroll")); });
+  await page.getByRole("tab", { name: "All PRs" }).click();
+  await page.getByRole("tab", { name: "Chats" }).click();
+  await expect.poll(() => t().evaluate((el) => Math.round(el.scrollTop))).toBe(300); // reading: same place
+  expect(ctx.errors).toEqual([]);
+});
