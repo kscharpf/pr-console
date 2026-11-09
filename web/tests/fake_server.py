@@ -180,7 +180,13 @@ def main() -> None:
     server.TOKEN = "test-token"  # noqa: S105  the fixed token of the test server
     server.CACHE.data = {"prs": PRS, "fetched_at": NOW, "error": None, "refreshing": False}
     server.CACHE.open_numbers = lambda: {p["number"] for p in PRS}  # type: ignore[method-assign]  # the fake replaces gh
-    server.CACHE.refresh = lambda: None  # type: ignore[method-assign]  # the fake never calls gh
+
+    def fake_refresh(force: bool = False) -> None:  # noqa: ARG001 - matches Cache.refresh
+        time.sleep(1.5)  # long enough for the page to show the button busy
+        with server.CACHE.lock:
+            server.CACHE.data["fetched_at"] = time.time()
+
+    server.CACHE.refresh = fake_refresh  # type: ignore[method-assign]  # the fake never calls gh
     server.sessions = lambda: SESSIONS
     server.start_job = fake_start_job
     # Chats: the real ChatManager and SDK client over a fake CLI transport, in scratch directories.

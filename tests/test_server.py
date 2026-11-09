@@ -1,6 +1,8 @@
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import server
 
@@ -48,3 +50,23 @@ class StaticAssetTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ForcedRefresh(unittest.TestCase):
+    def test_force_clears_verdicts_and_queues_behind_a_running_refresh(self) -> None:
+        cache = server.Cache()
+        calls: list[bool] = []
+        cache.status[1] = {"head": "a", "at": time.time(), "verdict": None}  # type: ignore[typeddict-item]  # minimal entry
+
+        def fake_list(_args: list[str], timeout: int = 120) -> list[object]:  # noqa: ARG001
+            calls.append(cache.data["refreshing"])
+            if len(calls) == 1:
+                cache.refresh(force=True)  # a click while this refresh runs: queued, not dropped
+            return []
+
+        with mock.patch.object(server, "gh_json", fake_list):
+            cache.refresh(force=True)
+        self.assertEqual(calls, [True, True])  # ran twice: the queued forced refresh ran after
+        self.assertEqual(cache.status, {})
+        self.assertFalse(cache.data["refreshing"])
+        self.assertFalse(cache.rerun)

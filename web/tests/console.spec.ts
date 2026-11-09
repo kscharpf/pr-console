@@ -266,6 +266,7 @@ test("the page takes the repo and its conventions from /api/config", async ({ pa
 });
 
 test.describe("a config without some commands", () => {
+  test.describe.configure({ timeout: 90_000 }); // starts its own server, slow under load
   const PORT = 8797;
   const base = `http://127.0.0.1:${PORT}`;
   let proc: ChildProcess | null = null;
@@ -281,7 +282,7 @@ test.describe("a config without some commands", () => {
         } catch {
           return 0;
         }
-      })
+      }, { timeout: 25_000, message: "the second fake server did not start (slow under load?)" })
       .toBe(200);
   });
   test.afterAll(async () => {
@@ -328,4 +329,15 @@ test("sessions cleanup: a dry run that keeps the branch says so and offers no Ap
   await expect(dialog(page)).toBeHidden();
   await page.waitForTimeout(300);
   expect(ctx.posts).toEqual([{ kind: "cleanup", branch: "train/open-1", apply: false }]);
+});
+
+test("Refresh stays busy until a list fetched after the click arrives", async ({ page }) => {
+  const ctx = await open(page);
+  const btn = page.getByTestId("refresh");
+  const before = await page.getByTestId("meta").textContent();
+  await btn.click();
+  await expect(btn).toHaveAttribute("data-loading", "true");
+  await expect(btn).not.toHaveAttribute("data-loading", "true", { timeout: 10_000 });
+  await expect(page.getByTestId("meta")).not.toHaveText(before ?? "");
+  expect(ctx.cspErrors).toEqual([]);
 });

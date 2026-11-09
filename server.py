@@ -170,6 +170,7 @@ class Cache:
     def __init__(self) -> None:
         self.lock = threading.Lock()
         self.data: CacheData = {"prs": [], "fetched_at": None, "error": None, "refreshing": False}
+        self.rerun = False
         self.status: dict[JobKey, VerdictEntry] = {}  # pr -> verdict at a head
 
     def open_numbers(self) -> set[int]:
@@ -177,11 +178,16 @@ class Cache:
         prs: list[GhPr] = gh_json(["pr", "list", "--state", "open", "--limit", "300", "--json", "number"])
         return {p["number"] for p in prs}
 
-    def refresh(self) -> None:
+    def refresh(self, force: bool = False) -> None:
+        """Refetch the PR list. `force` (the Refresh button) re-runs every verdict, and a forced
+        request made while a refresh runs is queued to run right after it."""
         with self.lock:
             if self.data["refreshing"]:
+                self.rerun = self.rerun or force
                 return
             self.data["refreshing"] = True
+            if force:
+                self.status.clear()
         try:
             fields = (
                 "number,title,headRefName,headRefOid,baseRefName,author,createdAt,labels,reviews,comments,isDraft,body"
@@ -201,6 +207,9 @@ class Cache:
         finally:
             with self.lock:
                 self.data["refreshing"] = False
+                again, self.rerun = self.rerun, False
+            if again:
+                self.refresh(force=True)
 
     def _row(self, p: GhPr) -> PrRow:
         branch = p["headRefName"]
@@ -731,7 +740,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path.startswith("/api/chats"):
             return self._chats_post(path, body)
         if path == "/api/refresh":
-            threading.Thread(target=CACHE.refresh, daemon=True).start()
+            threading.Thread(target=CACHE.refresh, kwargs={"force": True}, daemon=True).start()
             return self._send(202, {"ok": True})
         if path == "/api/action":
             try:

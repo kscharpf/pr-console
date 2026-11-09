@@ -88,13 +88,26 @@ function Console() {
     setOrder((o) => (on ? (o.includes(n) ? o : [...o, n]) : o.filter((x) => x !== n)));
   }, []);
 
+  // The button spins until the server reports a list fetched after the click.
+  const [refreshing, setRefreshing] = useState(false);
   const refresh = async () => {
+    const clicked = Date.now() / 1000;
+    setRefreshing(true);
     try {
       await api.refresh();
+      const deadline = Date.now() + 5 * 60_000;
+      // bound: stops when a list fetched after the click arrives, or after five minutes
+      while (Date.now() < deadline) {
+        await new Promise((ok) => setTimeout(ok, 1000));
+        const d = await api.prs();
+        if (d.fetched_at !== null && d.fetched_at > clicked && !d.refreshing) break;
+      }
+      await loadPrs();
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRefreshing(false);
     }
-    setTimeout(() => void loadPrs(), 500);
   };
 
   // A chat links to its PR: show the PR list and bring that row into view.
@@ -145,7 +158,7 @@ function Console() {
               <Text size="sm" c="dimmed" data-testid="meta">
                 {meta}
               </Text>
-              <Button variant="default" size="xs" onClick={() => void refresh()} data-testid="refresh">
+              <Button variant="default" size="xs" onClick={() => void refresh()} loading={refreshing} data-testid="refresh">
                 Refresh
               </Button>
               <ColorToggle />

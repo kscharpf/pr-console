@@ -221,6 +221,7 @@ test("the server validates chat input", async ({ request }) => {
 });
 
 test.describe("restart", () => {
+  test.describe.configure({ timeout: 90_000 }); // starts its own server, slow under load
   const PORT = 8799;
   let proc: ChildProcess | null = null;
   const dir = mkdtempSync(join(tmpdir(), "pr-console-restart-"));
@@ -234,7 +235,7 @@ test.describe("restart", () => {
         } catch {
           return 0;
         }
-      })
+      }, { timeout: 25_000, message: "the second fake server did not start (slow under load?)" })
       .toBe(200);
   }
   async function stop() {
