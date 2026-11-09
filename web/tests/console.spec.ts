@@ -316,3 +316,16 @@ test.describe("a config without some commands", () => {
     expect((await post({ kind: "close", pr: 103, comment: "" })).status()).toBe(202);
   });
 });
+
+test("sessions cleanup: a dry run that keeps the branch says so and offers no Apply", async ({ page }) => {
+  const ctx = await open(page);
+  await page.getByRole("tab", { name: "Sessions" }).click();
+  await page.getByTestId("cleanup-train/open-1").click();
+  await expect(dialog(page)).toContainText("Nothing to clean up: train/open-1");
+  await expect(dialog(page)).toContainText("KEEP (no merged pull request has it as its head branch)");
+  await expect(page.getByTestId("dialog-cancel")).toHaveCount(0);
+  await page.getByTestId("dialog-confirm").click();
+  await expect(dialog(page)).toBeHidden();
+  await page.waitForTimeout(300);
+  expect(ctx.posts).toEqual([{ kind: "cleanup", branch: "train/open-1", apply: false }]);
+});

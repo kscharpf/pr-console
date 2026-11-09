@@ -122,6 +122,11 @@ function WorktreeRow({ w, onDone }: { w: Worktree; onDone: () => Promise<void> }
     try {
       const dry = await run({ kind: "cleanup", branch: w.branch, apply: false });
       if (!dry) return;
+      if (dry.exit !== 0) {
+        // The dry run declined (e.g. the branch's PR is still open): a normal answer, not a failure.
+        await notify(`Nothing to clean up: ${w.branch}`, `The cleanup command kept this branch:\n\n${dry.output.join("\n")}`);
+        return;
+      }
       const apply = { kind: "cleanup", branch: w.branch, apply: true } as const;
       const first = await confirm({
         title: `Clean up ${w.branch}?`,

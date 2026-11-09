@@ -113,7 +113,23 @@ SESSIONS: server.SessionsView = {
                 "claude_lock": None,
                 "is_main": False,
                 "ready_to_clean": True,
-            }
+            },
+            {
+                "path": "/repo/.claude/worktrees/reverify-392",
+                "head": "ccc",
+                "branch": "train/open-1",
+                "detached": False,
+                "bare": False,
+                "locked": False,
+                "lock_reason": "",
+                "prunable": False,
+                "dirty": False,
+                "open_pr": 392,
+                "merged_pr": None,
+                "claude_lock": None,
+                "is_main": False,
+                "ready_to_clean": False,
+            },
         ],
     },
     "reverify_locks": [],
@@ -126,7 +142,11 @@ def fake_start_job(key: server.JobKey, argv: list[str]) -> server.Job:
     with server.JOBS_LOCK:
         jid = secrets.token_hex(6)
         out = [f"fake run of {' '.join(argv)}"]
-        if "cleanup-merged" in argv[0] and "--apply" not in argv:
+        exit_code = 0
+        if "cleanup-merged" in argv[0] and "train/open-1" in argv:
+            out.append("train/open-1: KEEP (no merged pull request has it as its head branch)")
+            exit_code = 1
+        elif "cleanup-merged" in argv[0] and "--apply" not in argv:
             out.append("would remove worktree /repo/.claude/worktrees/agent-1 and branch m3/wp-done")
         job: server.Job = {
             "id": jid,
@@ -134,7 +154,7 @@ def fake_start_job(key: server.JobKey, argv: list[str]) -> server.Job:
             "argv": argv,
             "started": time.time(),
             "output": out,
-            "exit": 0,
+            "exit": exit_code,
             "ended": time.time(),
         }
         server.JOBS[jid] = job
