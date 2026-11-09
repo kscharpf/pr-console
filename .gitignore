@@ -1,0 +1,4 @@
+__pycache__/
+actions.jsonl
+chats/
+.venv/

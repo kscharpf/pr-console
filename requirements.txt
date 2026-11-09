@@ -1,0 +1,2 @@
+# The only Python dependency: the Claude Agent SDK, for the Chats view (approved by the maintainer).
+claude-agent-sdk==0.2.179

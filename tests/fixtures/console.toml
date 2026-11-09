@@ -1,0 +1,44 @@
+# Test config: the full set of commands and conventions, with a neutral owner.
+name = "Example"
+repo = "/nonexistent"
+gh_repo = "example/none"
+
+[commands]
+dry_run_flag = "--dry-run"
+apply_flag = "--apply"
+verdict = ["scripts/pr-status", "--train", "{pr}"]
+train_verdict = ["scripts/pr-status", "{pr}"]
+reverify = ["scripts/reverify", "--wait", "{pr}"]
+reverify_cancel = ["scripts/reverify", "--cancel", "{pr}"]
+reverify_status = ["scripts/reverify", "--status", "{pr}"]
+train = ["scripts/train", "{dry_run}", "{prs}"]
+rebuild = ["scripts/train", "{dry_run}", "--rebuild", "{train}", ["--without", "{without}"]]
+cleanup = ["scripts/cleanup-merged", "{apply}", "{branch}"]
+
+[conventions]
+train_branch_prefix = "train/"
+train_title_prefix = "chore(train):"
+verify_workflow = "verify.yml"
+maintainer_label = "needs-maintainer"
+worktrees_dir = ".claude/worktrees"
+reverify_lock_dir = "reverify"
+
+[conventions.worktree_groups]
+"scripts/reverify worktrees" = "reverify-"
+"scripts/train worktrees" = "train/"
+
+[verdicts]
+ready_for_train = "READY FOR TRAIN"
+ready = "READY"
+not_ready = "NOT READY"
+
+[coordinator]
+description = "it dispatches wp-implementer and reviewer agents."
+prompt_append = """\
+You are the multi-agent coordinator session for this repository, started from the \
+maintainer's PR console. Before acting, read AGENTS.md and docs/process/coordinator.md, \
+and follow them and docs/process/decision-rights.md. Delegate pull-request-sized \
+implementation to the wp-implementer agent and every review to the reviewer agent \
+(.claude/agents/), briefed per docs/process/agent-brief.md; do not implement such work \
+yourself. Only the maintainer assigns pull requests to merge trains: never build, \
+rebuild or merge a train unless the maintainer names the PRs in this chat."""

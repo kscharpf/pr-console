@@ -1,0 +1,145 @@
+import json
+import os
+import tempfile
+import threading
+import time
+import unittest
+from pathlib import Path
+
+import chats as C
+
+
+class Validation(unittest.TestCase):
+    def test_session_id(self):
+        ok = "1648822d-86eb-4655-bf84-6baf32bde3b6"
+        self.assertEqual(C.validate_session_id(ok), ok)
+        for bad in ["", "../../etc/passwd", ok.upper(), ok + "x", ok[:-1], " " + ok, None, 7,
+                    "1648822d_86eb_4655_bf84_6baf32bde3b6", ok.replace("-", "/")]:
+            with self.assertRaises(C.ChatError, msg=repr(bad)):
+                C.validate_session_id(bad)
+
+    def test_prompt(self):
+        self.assertEqual(C.validate_prompt("hi"), "hi")
+        self.assertEqual(len(C.validate_prompt("x" * C.MAX_PROMPT)), C.MAX_PROMPT)
+        for bad in ["", "   \n", "x" * (C.MAX_PROMPT + 1), None, ["hi"]]:
+            with self.assertRaises(C.ChatError):
+                C.validate_prompt(bad)
+
+    def test_modes_never_bypass(self):
+        for m in C.PERMISSION_MODES:
+            self.assertEqual(C.validate_choice(m, C.PERMISSION_MODES, "mode"), m)
+        for bad in ["bypassPermissions", "acceptEdits", "dontAsk", "DEFAULT"]:
+            with self.assertRaises(C.ChatError):
+                C.validate_choice(bad, C.PERMISSION_MODES, "mode")
+        self.assertEqual(C.validate_choice(None, C.MODELS, "model"), "")
+
+    def test_cwd(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = os.path.realpath(t)
+            main, wt = Path(root, "main"), Path(root, "main", ".claude", "worktrees", "a")
+            wt.mkdir(parents=True)
+            other = Path(root, "other")
+            other.mkdir()
+            os.symlink(wt, Path(root, "link"))
+            dirs = [{"path": str(main), "branch": "main", "is_main": True},
+                    {"path": str(wt), "branch": "x", "is_main": False}]
+            self.assertEqual(C.validate_cwd(str(main), dirs), str(main))
+            self.assertEqual(C.validate_cwd(str(wt) + "/", dirs), str(wt))
+            self.assertEqual(C.validate_cwd(str(Path(root, "link")), dirs), str(wt))  # same directory
+            for bad in [str(other), str(wt / ".."), str(main / ".claude"), "", None, "/", str(main) + "\0",
+                        "relative/main"]:
+                with self.assertRaises(C.ChatError, msg=repr(bad)):
+                    C.validate_cwd(bad, dirs)
+
+    def test_worktree_dirs_reads_git(self):
+        with tempfile.TemporaryDirectory() as t:
+            repo = Path(t, "r")
+            repo.mkdir()
+            run = lambda *a: __import__("subprocess").run(["git", "-C", str(repo), *a], check=True,  # noqa: E731
+                                                          capture_output=True)
+            run("init", "-q", "-b", "main")
+            run("-c", "user.email=a@b", "-c", "user.name=a", "commit", "-q", "--allow-empty", "-m", "x")
+            run("worktree", "add", "-q", "-b", "feat", str(Path(t, "wt")))
+            dirs = C.worktree_dirs(str(repo))
+            self.assertEqual([(Path(d["path"]).name, d["branch"], d["is_main"]) for d in dirs],
+                             [("r", "main", True), ("wt", "feat", False)])
+            with self.assertRaises(C.ChatError):
+                C.worktree_dirs(t)  # not a repository
+
+
+class Buffer(unittest.TestCase):
+    def test_ids_replay_and_persistence(self):
+        with tempfile.TemporaryDirectory() as t:
+            log = Path(t, "c.jsonl")
+            b = C.EventBuffer(log)
+            b.append("user", text="hi")
+            b.append("delta", text="he")
+            b.append("text", text="hello")
+            self.assertEqual([e["id"] for e in b.after(0)], [1, 2, 3])
+            self.assertEqual([e["kind"] for e in b.after(1)], ["delta", "text"])
+            self.assertEqual(b.after(3), [])
+            # deltas are not persisted; ids continue after a reload
+            with open(log, "a") as fh:
+                fh.write('{"torn')
+            r = C.EventBuffer.load(log)
+            self.assertEqual([(e["id"], e["kind"]) for e in r.events], [(1, "user"), (3, "text")])
+            self.assertEqual(r.append("user", text="again")["id"], 4)
+
+    def test_after_waits_for_an_event(self):
+        b = C.EventBuffer()
+        threading.Timer(0.1, lambda: b.append("info", text="x")).start()
+        t0 = time.monotonic()
+        evs = b.after(0, timeout=5)
+        self.assertEqual([e["kind"] for e in evs], ["info"])
+        self.assertLess(time.monotonic() - t0, 2)
+        t0 = time.monotonic()
+        self.assertEqual(b.after(1, timeout=0.1), [])  # times out without one
+        self.assertGreaterEqual(time.monotonic() - t0, 0.09)
+
+    def test_compaction_drops_only_superseded_deltas(self):
+        b = C.EventBuffer()
+        for _ in range(C.BUFFER_COMPACT):
+            b.append("delta", text="x")
+        b.append("text", text="full")
+        b.append("delta", text="new")
+        kinds = [e["kind"] for e in b.events]
+        self.assertEqual(kinds, ["text", "delta"])
+        self.assertEqual(b.after(0)[-1]["id"], C.BUFFER_COMPACT + 2)
+
+    def test_tool_text_truncates(self):
+        self.assertEqual(C.tool_text([{"type": "text", "text": "a"}, {"type": "image"}]), 'a\n{"type": "image"}')
+        long = C.tool_text("x" * (C.MAX_TOOL_TEXT + 5))
+        self.assertTrue(long.endswith("(5 more characters)"))
+        self.assertEqual(C.tool_text(None), "")
+
+
+class Registry(unittest.TestCase):
+    def test_registry_reload_marks_ended(self):
+        with tempfile.TemporaryDirectory() as t:
+            cid = "1648822d-86eb-4655-bf84-6baf32bde3b6"
+            Path(t, "registry.json").write_text(json.dumps([
+                {"id": cid, "cwd": t, "created": 1.0, "title": "x", "model": "", "permission_mode": "default",
+                 "resume_id": cid},
+                {"id": "../evil", "cwd": t, "created": 2.0, "title": "y"}]))
+            Path(t, f"{cid}.jsonl").write_text(json.dumps({"id": 5, "t": 9.0, "kind": "user", "text": "hi"}) + "\n")
+            m = C.ChatManager(t, client_factory=lambda o: None)
+            rows = m.list()
+            self.assertEqual([(r["id"], r["status"], r["last_event_id"]) for r in rows], [(cid, "ended", 5)])
+            with self.assertRaises(C.ChatError):
+                m.get("../evil")
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class CoordinatorRole(unittest.TestCase):
+    def test_config_prompt_names_the_role_and_the_repo_rules(self):
+        from tests import TEST_CONFIG as cfg
+        for s in ("coordinator", "AGENTS.md", "docs/process/coordinator.md", "wp-implementer", "reviewer", "merge trains"):
+            self.assertIn(s, cfg["coordinator"]["prompt_append"])
+
+    def test_manager_keeps_the_configured_append(self):
+        with tempfile.TemporaryDirectory() as t:
+            m = C.ChatManager(t, client_factory=lambda o: None, prompt_append="ROLE")
+            self.assertEqual(m.prompt_append, "ROLE")

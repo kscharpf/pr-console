@@ -1,0 +1,20 @@
+# Test config: no reverify commands, no label, no dry runs. Their buttons must not appear.
+repo = "/nonexistent"
+gh_repo = "example/none"
+
+[commands]
+apply_flag = "--apply"
+verdict = ["scripts/pr-status", "--train", "{pr}"]
+train_verdict = ["scripts/pr-status", "{pr}"]
+train = ["scripts/train", "{prs}"]
+rebuild = ["scripts/train", "--rebuild", "{train}", ["--without", "{without}"]]
+cleanup = ["scripts/cleanup-merged", "{apply}", "{branch}"]
+
+[conventions]
+train_branch_prefix = "train/"
+worktrees_dir = ".claude/worktrees"
+
+[verdicts]
+ready_for_train = "READY FOR TRAIN"
+ready = "READY"
+not_ready = "NOT READY"
