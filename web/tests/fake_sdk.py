@@ -14,6 +14,7 @@ the prompt:
 """
 
 import asyncio
+import contextlib
 import json
 import os
 import uuid
@@ -125,7 +126,7 @@ class FakeTransport(Transport):
             calls = [("toolu_a", {"command": "ls -la"})] + ([("toolu_b", {"command": "git status"})] if word == "perm2" else [])
             await put(self._asst(*[{"type": "tool_use", "id": tid, "name": "Bash", "input": inp} for tid, inp in calls]))
             answers = await asyncio.gather(*[self._ask(tid, "Bash", inp) for tid, inp in calls])
-            for (tid, inp), a in zip(calls, answers):
+            for (tid, inp), a in zip(calls, answers, strict=True):
                 ok = a.get("behavior") == "allow"
                 await put(self._tool_result(tid, f"ran {inp['command']}" if ok else f"denied: {a.get('message', '')}", not ok))
             await put(self._asst({"type": "text", "text": "permission flow finished"}))
@@ -135,10 +136,8 @@ class FakeTransport(Transport):
             while not self.interrupted.is_set() and n < 600:  # bound: interrupt, or 60 s
                 await put(self._delta(f"tick {n} "))
                 n += 1
-                try:
+                with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(self.interrupted.wait(), 0.1)
-                except asyncio.TimeoutError:
-                    pass
             await put(self._result("error_during_execution", True, "aborted_streaming", None))
         elif word == "hook":
             await put(self._asst({"type": "tool_use", "id": "toolu_h", "name": "Bash", "input": {"command": "sleep 1 &"}}))

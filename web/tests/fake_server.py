@@ -1,6 +1,7 @@
 """The real server.py Handler with GitHub, git and the scripts replaced by fixtures.
 
-Run: ../.venv/bin/python -I tests/fake_server.py --port 8798 [--config <file>] (default tests/fixtures/console.toml). Token: "test-token". Nothing leaves the machine:
+Run: ../.venv/bin/python -I tests/fake_server.py --port 8798 [--config <file>]
+(default tests/fixtures/console.toml). Token: "test-token". Nothing leaves the machine:
 actions only record a finished fake job.
 """
 
@@ -15,16 +16,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import server  # noqa: E402
+import server
 
 NOW = time.time()
 
 
-def pr(n: int, title: str, verdict: str, reasons: Iterable[str] = (), labels: Iterable[str] = (),
+def pr(  # noqa: PLR0913, PLR0917  a fixture builder: each keyword is one field of a PR row
+    n: int, title: str, verdict: str, reasons: Iterable[str] = (), labels: Iterable[str] = (),
        train: bool = False, review: str = "APPROVED", answered: bool = True) -> server.PrRow:
     branch = f"train/2026-11-08-{n}" if train else f"m3/wp-{n}"
     return {
-        "number": n, "title": title, "branch": branch, "scope": branch.split("/")[0] + "/",
+        "number": n, "title": title, "branch": branch, "scope": branch.split("/", maxsplit=1)[0] + "/",
         "author": "octo", "head": f"{n:07d}abcdef", "base": "main",
         "created_at": "2026-11-07T10:00:00Z", "draft": False, "labels": list(labels),
         "review": {"state": review, "author": "reviewer", "at": "2026-11-07T11:00:00Z", "answered": answered},
@@ -87,7 +89,7 @@ def main() -> None:
     log = Path(tempfile.mkdtemp(prefix="pr-console-test-")) / "actions.jsonl"
     server.CONFIG["port"] = a.port
     server.CONFIG["log_file"] = str(log)
-    server.TOKEN = "test-token"
+    server.TOKEN = "test-token"  # noqa: S105  the fixed token of the test server
     server.CACHE.data = {"prs": PRS, "fetched_at": NOW, "error": None, "refreshing": False}
     server.CACHE.open_numbers = lambda: {p["number"] for p in PRS}  # type: ignore[method-assign]  # the fake replaces gh
     server.CACHE.refresh = lambda: None  # type: ignore[method-assign]  # the fake never calls gh

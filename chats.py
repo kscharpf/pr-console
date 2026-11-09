@@ -10,6 +10,7 @@ Nothing is approved here; a request that is never answered is denied when the ch
 """
 
 import asyncio
+import contextlib
 import json
 import os
 import re
@@ -23,8 +24,13 @@ from typing import TYPE_CHECKING, Any, Literal, TypedDict, TypeVar, cast
 
 if TYPE_CHECKING:  # the SDK is optional at run time (chats are off without it)
     from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
-    from claude_agent_sdk.types import (PermissionMode, PermissionResultAllow, PermissionResultDeny,
-                                        SystemPromptPreset, ToolPermissionContext)
+    from claude_agent_sdk.types import (
+        PermissionMode,
+        PermissionResultAllow,
+        PermissionResultDeny,
+        SystemPromptPreset,
+        ToolPermissionContext,
+    )
 
 T = TypeVar("T")
 # One event of a chat: {"id", "t", "kind", ...fields}. The fields carry JSON from the CLI (tool
@@ -122,8 +128,9 @@ def worktree_dirs(repo: str) -> list[ChatDir]:
     """[{path, branch, is_main}] of `git worktree list --porcelain` in repo (bare and prunable ones left out)."""
     import parsers as P
     try:
+        # check=False: a non-zero exit is turned into a ChatError below
         p = subprocess.run(["git", "worktree", "list", "--porcelain"], cwd=repo, capture_output=True,
-                           text=True, timeout=30)
+                           text=True, timeout=30, check=False)
     except (OSError, subprocess.TimeoutExpired) as e:
         raise ChatError(f"git worktree list failed: {e}") from e
     if p.returncode != 0:
@@ -139,7 +146,7 @@ def validate_cwd(v: object, dirs: list[ChatDir]) -> str:
         raise ChatError("choose a working directory")
     want = os.path.realpath(v)
     for d in dirs:
-        if os.path.realpath(d["path"]) == want and os.path.isdir(want):
+        if os.path.realpath(d["path"]) == want and Path(want).is_dir():
             return d["path"]
     raise ChatError("the working directory must be the main checkout or a worktree from `git worktree list`")
 
@@ -165,7 +172,7 @@ class EventBuffer:
             self.next_id += 1
             self.events.append(ev)
             if kind != "delta" and self.log_path is not None:
-                with open(self.log_path, "a", encoding="utf-8") as fh:
+                with self.log_path.open("a", encoding="utf-8") as fh:
                     fh.write(json.dumps(ev) + "\n")
             if len(self.events) > BUFFER_COMPACT:
                 self._compact()
@@ -306,7 +313,7 @@ class ChatManager:
     def _write_registry(self) -> None:
         tmp = self.registry_path.with_suffix(".tmp")
         tmp.write_text(json.dumps([c.meta for c in self.chats.values()], indent=1), encoding="utf-8")
-        os.replace(tmp, self.registry_path)
+        tmp.replace(self.registry_path)
 
     # -- calls from HTTP threads
 
@@ -352,7 +359,7 @@ class ChatManager:
                                 model="", permission_mode="auto", resume_id=cid)
                 chat = Chat(meta, EventBuffer(self._log(cid), transcript_events(cid, cwd)))
                 for ev in chat.buffer.events:  # persist the transcript as this chat's log
-                    with open(self._log(cid), "a", encoding="utf-8") as fh:
+                    with self._log(cid).open("a", encoding="utf-8") as fh:
                         fh.write(json.dumps(ev) + "\n")
                 self.chats[cid] = chat
                 self._write_registry()
@@ -397,10 +404,9 @@ class ChatManager:
             tasks = [c.task for c in self.chats.values() if c.task is not None]
             if tasks:
                 await asyncio.wait(tasks, timeout=10)
-        try:
+        # Best effort at exit: a session that does not stop in time dies with the process.
+        with contextlib.suppress(Exception):
             self._call(stop_all(), timeout=15)
-        except Exception:  # noqa: BLE001
-            pass
 
     # -- on the loop
 
@@ -430,7 +436,7 @@ class ChatManager:
 
         stderr_tail: list[str] = []
         inbox = chat.inbox
-        assert inbox is not None  # _start sets it before it starts this task
+        assert inbox is not None  # noqa: S101  narrows the type; _start sets it before it starts this task
 
         async def can_use_tool(tool_name: str, tool_input: dict[str, Any], ctx: "ToolPermissionContext"
                                ) -> "PermissionResultAllow | PermissionResultDeny":
@@ -512,14 +518,21 @@ class ChatManager:
                     fut.set_result(False)  # deny what is still open
             if reader is not None and not reader.done():
                 reader.cancel()
-            try:
+            # The session is over either way; its error, if any, was shown above.
+            with contextlib.suppress(Exception):
                 await client.disconnect()
-            except Exception:  # noqa: BLE001
-                pass
 
     async def _read(self, chat: Chat, client: "ClaudeSDKClient") -> None:
-        from claude_agent_sdk import (AssistantMessage, ResultMessage, StreamEvent, SystemMessage,
-                                      TextBlock, ToolResultBlock, ToolUseBlock, UserMessage)
+        from claude_agent_sdk import (
+            AssistantMessage,
+            ResultMessage,
+            StreamEvent,
+            SystemMessage,
+            TextBlock,
+            ToolResultBlock,
+            ToolUseBlock,
+            UserMessage,
+        )
         async for m in client.receive_messages():
             if isinstance(m, StreamEvent):
                 ev = m.event or {}

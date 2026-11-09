@@ -22,7 +22,7 @@ class StaticAssetTest(unittest.TestCase):
 
     def test_serves_assets(self) -> None:
         asset = server.static_asset(server.DIST, "/assets/index-abc.js")
-        assert asset is not None
+        assert asset is not None  # noqa: S101  narrows the type for mypy; assertEqual below checks the value
         f, ctype = asset
         self.assertEqual((f.name, ctype), ("index-abc.js", "text/javascript"))
 

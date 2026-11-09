@@ -2,6 +2,7 @@
 
 import argparse
 import concurrent.futures
+import contextlib
 import hmac
 import http.server
 import json
@@ -18,8 +19,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import config as K  # noqa: E402
-import parsers as P  # noqa: E402
+import config as K
+import parsers as P
 
 if TYPE_CHECKING:
     import chats as C
@@ -52,11 +53,12 @@ ENV = dict(os.environ, NO_COLOR="1", GH_FORCE_TTY="0", GH_NO_UPDATE_NOTIFIER="1"
 def run(args: list[str], timeout: float = 300) -> tuple[int, str, str]:
     """Run a command (argument list, never a shell) in the managed repo's checkout."""
     try:
+        # check=False: the caller reads the exit code
         p = subprocess.run(args, cwd=CONFIG["repo"], env=ENV, capture_output=True, text=True,
-                           timeout=timeout)
-        return p.returncode, p.stdout, p.stderr
+                           timeout=timeout, check=False)
     except (OSError, subprocess.TimeoutExpired) as e:
         return 255, "", str(e)
+    return p.returncode, p.stdout, p.stderr
 
 
 def gh_json(args: list[str], timeout: float = 120) -> Any:
@@ -69,7 +71,7 @@ def gh_json(args: list[str], timeout: float = 120) -> Any:
 
 def use_config(cfg: K.Config) -> None:
     """Install a checked config (config.load)."""
-    global CFG
+    global CFG  # noqa: PLW0603  the installed config is process state, read by every request handler
     CFG = cfg
     CONFIG["repo"] = cfg["repo"]
     CONFIG["gh_repo"] = cfg["gh_repo"]
@@ -175,9 +177,9 @@ class Cache:
                 return
             self.data["refreshing"] = True
         try:
-            prs: list[GhPr] = gh_json(["pr", "list", "--state", "open", "--limit", "300", "--json",
-                           "number,title,headRefName,headRefOid,baseRefName,author,createdAt,"
-                           "labels,reviews,comments,isDraft,body"])
+            fields = ("number,title,headRefName,headRefOid,baseRefName,author,createdAt,"
+                      "labels,reviews,comments,isDraft,body")
+            prs: list[GhPr] = gh_json(["pr", "list", "--state", "open", "--limit", "300", "--json", fields])
             rows = [self._row(p) for p in prs]
             with concurrent.futures.ThreadPoolExecutor(CONFIG["concurrency"]) as ex:
                 list(ex.map(self._enrich, rows))
@@ -224,11 +226,10 @@ class Cache:
             r["status"] = v
         if r["is_train"]:
             msgs: list[str] = []
-            try:
+            # The commits are the second source of constituents; without them the body and title still serve.
+            with contextlib.suppress(Exception):
                 commits: list[dict[str, str]] = gh_json(["pr", "view", str(n), "--json", "commits"])["commits"]
                 msgs = [c.get("messageHeadline", "") + "\n" + c.get("messageBody", "") for c in commits]
-            except Exception:  # noqa: BLE001
-                pass
             r["constituents"] = P.train_constituents(r["title"], r.get("body", ""), msgs,
                                                      conv("train_title_prefix") or "")
             workflow = conv("verify_workflow")
@@ -276,11 +277,11 @@ def refresher() -> None:
 def pid_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
-        return True
     except PermissionError:
         return True
     except (ProcessLookupError, OverflowError):
         return False
+    return True
 
 
 class ClaudeLock(P.LockReason):
@@ -362,7 +363,7 @@ def sessions() -> SessionsView:
             if not n.isdigit():
                 continue
             try:
-                holder = P.parse_reverify_lock(os.readlink(f))
+                holder = P.parse_reverify_lock(str(f.readlink()))
             except OSError:
                 holder = None
             argv = command("reverify_status", pr=int(n))
@@ -398,7 +399,7 @@ BUSY: set[JobKey] = set()
 
 
 def log_action(entry: Mapping[str, object]) -> None:
-    with open(CONFIG["log_file"], "a", encoding="utf-8") as fh:
+    with Path(CONFIG["log_file"]).open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(entry) + "\n")
 
 
@@ -420,9 +421,8 @@ def _items(v: object, what: str) -> list[object]:
 def build_action(body: dict[str, object]) -> tuple[JobKey, list[str]]:
     """Validate a request and return (key, argv). Raises ValidationError."""
     kind = body.get("kind")
-    if kind in K.ACTION_COMMANDS or kind == "label":
-        if kind not in K.enabled_actions(CFG):
-            raise P.ValidationError(f"action {kind!r} is not configured for this repo")
+    if (kind in K.ACTION_COMMANDS or kind == "label") and kind not in K.enabled_actions(CFG):
+        raise P.ValidationError(f"action {kind!r} is not configured for this repo")
     open_nums = CACHE.open_numbers()
 
     def pr(v: object) -> int:
@@ -556,7 +556,8 @@ def static_asset(ui: Path | None, path: str) -> tuple[Path, str] | None:
 class Handler(http.server.BaseHTTPRequestHandler):
     server_version = "pr-console"
 
-    def log_message(self, fmt: str, *args: object) -> None:  # never log the query string (it may hold the token)
+    # Ignores fmt and args so that the query string (it may hold the token) is never logged.
+    def log_message(self, fmt: str, *args: object) -> None:  # noqa: ARG002  the signature is the base class's
         sys.stderr.write(f"{self.command} {urllib.parse.urlsplit(self.path).path}\n")
 
     def _send(self, code: int, obj: object, ctype: str = "application/json") -> None:
@@ -801,7 +802,7 @@ STOPPING = threading.Event()
 def start_chats(state_dir: str, client_factory: "C.ClientFactory | None" = None,
                 prompt_append: str = "") -> "C.ChatManager | None":
     """Start the chat manager, or leave chats off when the SDK is not installed."""
-    global CHATS
+    global CHATS  # noqa: PLW0603  one chat manager per process, read by every request handler
     try:
         import claude_agent_sdk  # noqa: F401
     except ImportError:
@@ -813,7 +814,7 @@ def start_chats(state_dir: str, client_factory: "C.ClientFactory | None" = None,
 
 
 def main() -> None:
-    global TOKEN
+    global TOKEN  # noqa: PLW0603  the token is fixed once at startup, read by every request handler
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=os.environ.get("PR_CONSOLE_CONFIG"),
                     help="the per-repo TOML config (else $PR_CONSOLE_CONFIG); see examples/")

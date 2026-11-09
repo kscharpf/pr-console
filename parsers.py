@@ -79,7 +79,7 @@ def validate_pr(value: object, open_numbers: Collection[int]) -> int:
 
 def validate_branch(value: object) -> str:
     s = str(value)
-    if not BRANCH_RE.fullmatch(s) or s.startswith("-") or ".." in s or s.startswith("/"):
+    if not BRANCH_RE.fullmatch(s) or s.startswith(("-", "/")) or ".." in s:
         raise ValidationError(f"invalid branch name: {s!r}")
     return s
 

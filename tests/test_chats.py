@@ -10,9 +10,10 @@ from pathlib import Path
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 
 import chats as C
+from tests import TEST_CONFIG
 
 
-def no_client(options: ClaudeAgentOptions) -> ClaudeSDKClient:
+def no_client(_options: ClaudeAgentOptions) -> ClaudeSDKClient:
     raise AssertionError("these tests connect no session")
 
 
@@ -47,7 +48,7 @@ class Validation(unittest.TestCase):
             wt.mkdir(parents=True)
             other = Path(root, "other")
             other.mkdir()
-            os.symlink(wt, Path(root, "link"))
+            Path(root, "link").symlink_to(wt)
             dirs: list[C.ChatDir] = [{"path": str(main), "branch": "main", "is_main": True},
                     {"path": str(wt), "branch": "x", "is_main": False}]
             self.assertEqual(C.validate_cwd(str(main), dirs), str(main))
@@ -88,7 +89,7 @@ class Buffer(unittest.TestCase):
             self.assertEqual([e["kind"] for e in b.after(1)], ["delta", "text"])
             self.assertEqual(b.after(3), [])
             # deltas are not persisted; ids continue after a reload
-            with open(log, "a") as fh:
+            with log.open("a") as fh:
                 fh.write('{"torn')
             r = C.EventBuffer.load(log)
             self.assertEqual([(e["id"], e["kind"]) for e in r.events], [(1, "user"), (3, "text")])
@@ -144,9 +145,8 @@ if __name__ == "__main__":
 
 class CoordinatorRole(unittest.TestCase):
     def test_config_prompt_names_the_role_and_the_repo_rules(self) -> None:
-        from tests import TEST_CONFIG as cfg
         for s in ("coordinator", "AGENTS.md", "docs/process/coordinator.md", "wp-implementer", "reviewer", "merge trains"):
-            self.assertIn(s, cfg["coordinator"]["prompt_append"])
+            self.assertIn(s, TEST_CONFIG["coordinator"]["prompt_append"])
 
     def test_manager_keeps_the_configured_append(self) -> None:
         with tempfile.TemporaryDirectory() as t:

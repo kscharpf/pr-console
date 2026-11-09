@@ -44,7 +44,7 @@ class Loading(unittest.TestCase):
 
     def test_relative_repo_resolves_against_the_console_directory(self) -> None:
         console = Path(K.__file__).resolve().parent
-        cwd = os.getcwd()
+        cwd = Path.cwd()
         with tempfile.TemporaryDirectory() as t:
             os.chdir(t)
             try:

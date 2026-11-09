@@ -1,4 +1,3 @@
-import json
 import unittest
 from unittest import mock
 
@@ -131,7 +130,7 @@ class Actions(unittest.TestCase):
         self.p.stop()
 
     def test_train_dry_run(self) -> None:
-        key, argv = server.build_action({"kind": "train", "prs": [351, "350"], "dry_run": True})
+        _, argv = server.build_action({"kind": "train", "prs": [351, "350"], "dry_run": True})
         self.assertEqual(argv[1:], ["--dry-run", "351", "350"])
         self.assertEqual(argv[0], "/nonexistent/scripts/train")
 
