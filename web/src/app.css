@@ -94,8 +94,7 @@ body {
 .grow { flex: 1; }
 /* The chat pane fills the space between the sticky header (56px) and the fixed log panel (28vh). */
 .chat-pane-card {
-  height: calc(100vh - 56px - 28vh - 32px);
-  min-height: 320px;
+  min-height: 320px; /* the height is measured in ChatPane */
   display: flex;
   flex-direction: column;
 }

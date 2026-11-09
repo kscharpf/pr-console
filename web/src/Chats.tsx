@@ -1,5 +1,5 @@
 import { Alert, Anchor, Badge, Button, Card, Code, Group, NativeSelect, Stack, Text, Textarea, TextInput, Title } from "@mantine/core";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "./api";
 import { useChats, type ChatState } from "./chatStore";
 import { useConfig } from "./config";
@@ -222,6 +222,28 @@ function ChatPane({ r, onOpenPr }: { r: ChatRow; onOpenPr: (n: number) => void }
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const box = useRef<HTMLDivElement>(null);
+  const card = useRef<HTMLDivElement>(null);
+  // Fit the pane between where it starts and the top of the fixed log panel, measured rather
+  // than assumed: fonts and the rows above it differ between platforms.
+  const [height, setHeight] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const fit = () => {
+      const el = card.current;
+      if (!el) return;
+      const log = document.querySelector(".log");
+      const bottom = log ? log.getBoundingClientRect().top : window.innerHeight;
+      setHeight(Math.max(320, Math.floor(bottom - el.getBoundingClientRect().top - 12)));
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
+    const log = document.querySelector(".log");
+    if (log) ro.observe(log);
+    window.addEventListener("resize", fit);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", fit);
+    };
+  }, []);
   const stick = useRef(true); // follow new output unless the reader has scrolled up
   const lastTop = useRef(0); // scrollTop after our own scroll, to tell the reader's scrolls from ours
 
@@ -251,7 +273,7 @@ function ChatPane({ r, onOpenPr }: { r: ChatRow; onOpenPr: (n: number) => void }
 
   const running = r.status === "running" || r.status === "permission" || r.status === "starting";
   return (
-    <Card withBorder data-testid="chat-pane" className="chat-pane-card">
+    <Card withBorder data-testid="chat-pane" className="chat-pane-card" ref={card} h={height ?? undefined}>
       <Stack gap="xs" className="chat-pane-stack">
         <Group justify="space-between" wrap="nowrap">
           <Title order={5} lineClamp={1}>
