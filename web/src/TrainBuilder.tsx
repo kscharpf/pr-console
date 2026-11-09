@@ -158,7 +158,7 @@ function Rebuild({ prs }: { prs: PrRow[] }) {
   const valid = /^\d{1,6}$/.test(t) && w !== null && w.length > 0;
 
   const go = async (dry: boolean) => {
-    if (!valid || w === null) return;
+    if (!valid) return;
     const b: ActionBody = { kind: "rebuild", train: Number(t), without: w, dry_run: dry };
     if (!dry) {
       const ok = await confirm({

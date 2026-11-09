@@ -57,6 +57,7 @@ export function ChatsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount: reload sets state only after its await
     void reload();
     const t = setInterval(() => void reload(), POLL_MS);
     return () => clearInterval(t);

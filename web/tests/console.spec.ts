@@ -255,7 +255,7 @@ test("the page takes the repo and its conventions from /api/config", async ({ pa
   expect((await request.get("/api/config")).status()).toBe(403);
   const r = await request.get("/api/config", { headers: { "X-Token": TOKEN } });
   expect(r.status()).toBe(200);
-  const cfg = await r.json();
+  const cfg = (await r.json()) as { gh_repo: string; coordinator: { prompt_append?: string } };
   expect(cfg.gh_repo).toBe("example/none");
   expect(cfg.coordinator.prompt_append).toBeUndefined();
   await open(page);
@@ -310,7 +310,7 @@ test.describe("a config without some commands", () => {
     for (const body of [{ kind: "reverify", pr: 200 }, { kind: "reverify_cancel", pr: 200 }, { kind: "label", pr: 101, add: true }]) {
       const r = await post(body);
       expect(r.status()).toBe(400);
-      expect((await r.json()).error).toContain("not configured");
+      expect(((await r.json()) as { error: string }).error).toContain("not configured");
     }
     expect((await post({ kind: "train", prs: [101], dry_run: true })).status()).toBe(400);
     expect((await post({ kind: "close", pr: 103, comment: "" })).status()).toBe(202);

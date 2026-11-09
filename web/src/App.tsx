@@ -1,5 +1,5 @@
 import { ActionIcon, Alert, Button, Group, Tabs, Text, Title, Tooltip, useComputedColorScheme, useMantineColorScheme } from "@mantine/core";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiFailure } from "./api";
 import { ChatsProvider } from "./chatStore";
 import { ConfigProvider, useConfig } from "./config";
@@ -67,15 +67,17 @@ function Console() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount: loadPrs sets state only after its await
     void loadPrs();
     const t = setInterval(() => void loadPrs(), AUTO_REFRESH_MS);
     return () => clearInterval(t);
   }, [loadPrs]);
 
-  const prs = data?.prs ?? [];
+  const prs = useMemo(() => data?.prs ?? [], [data]);
   // Drop picks that are no longer open or no longer ready for a train.
   useEffect(() => {
     if (!data) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- drops picks the fresh PR list no longer allows; it changes only when data or cfg change
     setOrder((o) => {
       const keep = o.filter((n) => data.prs.some((p) => p.number === n && canTrain(cfg, p)));
       return keep.length === o.length ? o : keep;

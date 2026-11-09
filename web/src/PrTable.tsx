@@ -199,7 +199,7 @@ function Actions({ p }: { p: PrRow }) {
               variant="light"
               data-testid={`reverify-${n}`}
               onClick={() =>
-                ask({ kind: "reverify", pr: n }, `Reverify train #${n}`, "Merges main into the train, pushes, and starts a verify run.", "Reverify", false)
+                void ask({ kind: "reverify", pr: n }, `Reverify train #${n}`, "Merges main into the train, pushes, and starts a verify run.", "Reverify", false)
               }
             >
               reverify
@@ -212,7 +212,7 @@ function Actions({ p }: { p: PrRow }) {
               color="orange"
               data-testid={`reverify_cancel-${n}`}
               onClick={() =>
-                ask({ kind: "reverify_cancel", pr: n }, `Cancel and reverify #${n}`, "Cancels the stale verify run of this train and reverifies it.", "Cancel + reverify")
+                void ask({ kind: "reverify_cancel", pr: n }, `Cancel and reverify #${n}`, "Cancels the stale verify run of this train and reverifies it.", "Cancel + reverify")
               }
             >
               cancel+reverify
@@ -223,7 +223,7 @@ function Actions({ p }: { p: PrRow }) {
             variant="light"
             color="red"
             data-testid={`merge-${n}`}
-            onClick={() => ask({ kind: "merge", pr: n }, `MERGE train #${n}`, "Merges this train into main with a merge commit.", "Merge")}
+            onClick={() => void ask({ kind: "merge", pr: n }, `MERGE train #${n}`, "Merges this train into main with a merge commit.", "Merge")}
           >
             merge
           </Button>
@@ -236,7 +236,7 @@ function Actions({ p }: { p: PrRow }) {
           color="gray"
           data-testid={`label-${n}`}
           onClick={() =>
-            ask(
+            void ask(
               { kind: "label", pr: n, add: !nm },
               `${nm ? "Remove" : "Add"} label ${label} on #${n}`,
               p.title,

@@ -12,7 +12,7 @@ function inline(text: string, key: string): ReactNode[] {
   let last = 0;
   let n = 0;
   for (const m of text.matchAll(re)) {
-    const at = m.index ?? 0;
+    const at = m.index;
     if (at > last) out.push(text.slice(last, at));
     const k = `${key}-${n++}`;
     if (m[2] !== undefined) out.push(<code key={k}>{m[2]}</code>);

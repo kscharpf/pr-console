@@ -17,6 +17,7 @@ export function History() {
     }
   }, []);
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount: load sets state only after its await
     void load();
   }, [load]);
 
@@ -26,7 +27,7 @@ export function History() {
         Reload history
       </Button>
       {error && <Alert color="red">{error}</Alert>}
-      {rows && rows.length === 0 && <Text c="dimmed">No actions yet.</Text>}
+      {rows?.length === 0 && <Text c="dimmed">No actions yet.</Text>}
       {rows && rows.length > 0 && (
         <Table.ScrollContainer minWidth={700}>
           <Table verticalSpacing={4}>
