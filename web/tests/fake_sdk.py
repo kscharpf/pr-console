@@ -75,8 +75,12 @@ class FakeTransport(Transport):
             req = m["request"]
             if req["subtype"] == "interrupt":
                 self.interrupted.set()
-            await self.out.put({"type": "control_response", "response": {
-                "subtype": "success", "request_id": m["request_id"], "response": {}}})
+            await self.out.put(
+                {
+                    "type": "control_response",
+                    "response": {"subtype": "success", "request_id": m["request_id"], "response": {}},
+                }
+            )
         elif t == "control_response":
             r = m["response"]
             fut = self.waiting.pop(r["request_id"], None)
@@ -90,45 +94,92 @@ class FakeTransport(Transport):
     # -- replies
 
     def _asst(self, *blocks: Msg) -> Msg:
-        return {"type": "assistant", "session_id": self.session_id, "uuid": str(uuid.uuid4()),
-                "message": {"id": "msg_" + os.urandom(4).hex(), "model": "fake-model", "role": "assistant",
-                            "content": list(blocks)}}
+        return {
+            "type": "assistant",
+            "session_id": self.session_id,
+            "uuid": str(uuid.uuid4()),
+            "message": {
+                "id": "msg_" + os.urandom(4).hex(),
+                "model": "fake-model",
+                "role": "assistant",
+                "content": list(blocks),
+            },
+        }
 
     def _tool_result(self, tid: str, text: str, err: bool = False) -> Msg:
-        return {"type": "user", "session_id": self.session_id, "uuid": str(uuid.uuid4()),
-                "message": {"role": "user", "content": [
-                    {"type": "tool_result", "tool_use_id": tid, "content": text, "is_error": err}]}}
+        return {
+            "type": "user",
+            "session_id": self.session_id,
+            "uuid": str(uuid.uuid4()),
+            "message": {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": tid, "content": text, "is_error": err}],
+            },
+        }
 
     def _delta(self, text: str) -> Msg:
-        return {"type": "stream_event", "uuid": str(uuid.uuid4()), "session_id": self.session_id,
-                "event": {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": text}}}
+        return {
+            "type": "stream_event",
+            "uuid": str(uuid.uuid4()),
+            "session_id": self.session_id,
+            "event": {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": text}},
+        }
 
-    def _result(self, subtype: str = "success", is_error: bool = False, reason: str = "completed",
-                result: str | None = "done") -> Msg:
-        return {"type": "result", "subtype": subtype, "duration_ms": 5, "duration_api_ms": 1, "is_error": is_error,
-                "num_turns": 1, "session_id": self.session_id, "total_cost_usd": 0.0, "result": result,
-                "terminal_reason": reason}
+    def _result(
+        self, subtype: str = "success", is_error: bool = False, reason: str = "completed", result: str | None = "done"
+    ) -> Msg:
+        return {
+            "type": "result",
+            "subtype": subtype,
+            "duration_ms": 5,
+            "duration_api_ms": 1,
+            "is_error": is_error,
+            "num_turns": 1,
+            "session_id": self.session_id,
+            "total_cost_usd": 0.0,
+            "result": result,
+            "terminal_reason": reason,
+        }
 
     async def _ask(self, tid: str, name: str, inp: Msg) -> Msg:
         rid = "req_" + os.urandom(4).hex()
         fut: asyncio.Future[Msg] = asyncio.get_running_loop().create_future()
         self.waiting[rid] = fut
-        await self.out.put({"type": "control_request", "request_id": rid, "request": {
-            "subtype": "can_use_tool", "tool_name": name, "input": inp, "tool_use_id": tid}})
+        await self.out.put(
+            {
+                "type": "control_request",
+                "request_id": rid,
+                "request": {"subtype": "can_use_tool", "tool_name": name, "input": inp, "tool_use_id": tid},
+            }
+        )
         return await fut
 
     async def _turn(self, prompt: str) -> None:
         put = self.out.put
-        await put({"type": "system", "subtype": "init", "session_id": self.session_id, "model": "fake-model",
-                   "permissionMode": self.options.permission_mode, "cwd": str(self.options.cwd)})
+        await put(
+            {
+                "type": "system",
+                "subtype": "init",
+                "session_id": self.session_id,
+                "model": "fake-model",
+                "permissionMode": self.options.permission_mode,
+                "cwd": str(self.options.cwd),
+            }
+        )
         word = prompt.strip().split()[0] if prompt.strip() else ""
         if word in ("perm", "perm2"):
-            calls = [("toolu_a", {"command": "ls -la"})] + ([("toolu_b", {"command": "git status"})] if word == "perm2" else [])
-            await put(self._asst(*[{"type": "tool_use", "id": tid, "name": "Bash", "input": inp} for tid, inp in calls]))
+            calls = [("toolu_a", {"command": "ls -la"})] + (
+                [("toolu_b", {"command": "git status"})] if word == "perm2" else []
+            )
+            await put(
+                self._asst(*[{"type": "tool_use", "id": tid, "name": "Bash", "input": inp} for tid, inp in calls])
+            )
             answers = await asyncio.gather(*[self._ask(tid, "Bash", inp) for tid, inp in calls])
             for (tid, inp), a in zip(calls, answers, strict=True):
                 ok = a.get("behavior") == "allow"
-                await put(self._tool_result(tid, f"ran {inp['command']}" if ok else f"denied: {a.get('message', '')}", not ok))
+                await put(
+                    self._tool_result(tid, f"ran {inp['command']}" if ok else f"denied: {a.get('message', '')}", not ok)
+                )
             await put(self._asst({"type": "text", "text": "permission flow finished"}))
             await put(self._result())
         elif word == "slow":
@@ -140,17 +191,35 @@ class FakeTransport(Transport):
                     await asyncio.wait_for(self.interrupted.wait(), 0.1)
             await put(self._result("error_during_execution", True, "aborted_streaming", None))
         elif word == "hook":
-            await put(self._asst({"type": "tool_use", "id": "toolu_h", "name": "Bash", "input": {"command": "sleep 1 &"}}))
-            await put({"type": "system", "subtype": "hook_response", "session_id": self.session_id,
-                       "uuid": str(uuid.uuid4()), "hook_event": "PreToolUse", "hook_name": "PreToolUse:Bash",
-                       "outcome": "blocked", "exit_code": 2, "stderr": "background jobs (&) are blocked"})
+            await put(
+                self._asst({"type": "tool_use", "id": "toolu_h", "name": "Bash", "input": {"command": "sleep 1 &"}})
+            )
+            await put(
+                {
+                    "type": "system",
+                    "subtype": "hook_response",
+                    "session_id": self.session_id,
+                    "uuid": str(uuid.uuid4()),
+                    "hook_event": "PreToolUse",
+                    "hook_name": "PreToolUse:Bash",
+                    "outcome": "blocked",
+                    "exit_code": 2,
+                    "stderr": "background jobs (&) are blocked",
+                }
+            )
             await put(self._tool_result("toolu_h", "PreToolUse:Bash hook error: background jobs (&) are blocked", True))
             await put(self._result())
         elif word == "md":
-            await put(self._asst({"type": "text", "text":
-                "# Heading\n\nSome **bold** and `code` and a [link](https://example.com).\n\n"
-                "<img src=x onerror=\"window.__xss=1\"><script>window.__xss=2</script>\n\n"
-                "- one\n- two\n\n```\nfenced <b>not bold</b>\n```\n\n[bad](javascript:alert(1))"}))
+            await put(
+                self._asst(
+                    {
+                        "type": "text",
+                        "text": "# Heading\n\nSome **bold** and `code` and a [link](https://example.com).\n\n"
+                        '<img src=x onerror="window.__xss=1"><script>window.__xss=2</script>\n\n'
+                        "- one\n- two\n\n```\nfenced <b>not bold</b>\n```\n\n[bad](javascript:alert(1))",
+                    }
+                )
+            )
             await put(self._result())
         elif word == "long":
             for i in range(40):

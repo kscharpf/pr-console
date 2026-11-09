@@ -10,13 +10,13 @@ import parsers as P
 import server
 from tests import FIXTURES, TEST_CONFIG, row
 
-GOOD = '''
+GOOD = """
 repo = "/r"
 gh_repo = "o/n"
 [commands]
 dry_run_flag = "--dry-run"
 train = ["scripts/train", "{dry_run}", "{prs}"]
-'''
+"""
 
 
 def load_text(text: str) -> K.Config:
@@ -35,8 +35,10 @@ class Loading(unittest.TestCase):
         for f in examples:
             cfg = K.load(f)
             self.assertFalse(cfg["repo"].startswith("~"), f)  # ~ expanded
-            self.assertEqual(K.enabled_actions(cfg), ["reverify", "reverify_cancel", "merge", "close", "label",
-                                                      "train", "rebuild", "cleanup"])
+            self.assertEqual(
+                K.enabled_actions(cfg),
+                ["reverify", "reverify_cancel", "merge", "close", "label", "train", "rebuild", "cleanup"],
+            )
         self.assertEqual(TEST_CONFIG["gh_repo"], "example/none")
 
     def test_tilde_expanded(self) -> None:
@@ -105,11 +107,13 @@ class Loading(unittest.TestCase):
 
 class Expansion(unittest.TestCase):
     def test_list_and_nested_list(self) -> None:
-        self.assertEqual(K.expand(TEST_CONFIG, "train", prs=[3, 1], dry_run=False),
-                         ["/nonexistent/scripts/train", "3", "1"])
-        self.assertEqual(K.expand(TEST_CONFIG, "rebuild", train=9, without=[3, 1], dry_run=True),
-                         ["/nonexistent/scripts/train", "--dry-run", "--rebuild", "9",
-                          "--without", "3", "--without", "1"])
+        self.assertEqual(
+            K.expand(TEST_CONFIG, "train", prs=[3, 1], dry_run=False), ["/nonexistent/scripts/train", "3", "1"]
+        )
+        self.assertEqual(
+            K.expand(TEST_CONFIG, "rebuild", train=9, without=[3, 1], dry_run=True),
+            ["/nonexistent/scripts/train", "--dry-run", "--rebuild", "9", "--without", "3", "--without", "1"],
+        )
 
     def test_scalar_inside_an_argument_and_program_lookup(self) -> None:
         cfg = load_text('repo = "/r"\ngh_repo = "o/n"\n[commands]\nreverify = ["gh-x", "--pr={pr}"]\n')
@@ -142,8 +146,11 @@ class Disabled(unittest.TestCase):
 
     def test_actions_left_out_are_refused(self) -> None:
         self.assertEqual(K.enabled_actions(server.CFG), ["merge", "close", "train", "rebuild", "cleanup"])
-        for body in ({"kind": "reverify", "pr": 9}, {"kind": "reverify_cancel", "pr": 9},
-                     {"kind": "label", "pr": 7, "add": True}):
+        for body in (
+            {"kind": "reverify", "pr": 9},
+            {"kind": "reverify_cancel", "pr": 9},
+            {"kind": "label", "pr": 7, "add": True},
+        ):
             with self.assertRaisesRegex(P.ValidationError, "not configured"):
                 server.build_action(body)
 

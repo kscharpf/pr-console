@@ -54,8 +54,9 @@ def run(args: list[str], timeout: float = 300) -> tuple[int, str, str]:
     """Run a command (argument list, never a shell) in the managed repo's checkout."""
     try:
         # check=False: the caller reads the exit code
-        p = subprocess.run(args, cwd=CONFIG["repo"], env=ENV, capture_output=True, text=True,
-                           timeout=timeout, check=False)
+        p = subprocess.run(
+            args, cwd=CONFIG["repo"], env=ENV, capture_output=True, text=True, timeout=timeout, check=False
+        )
     except (OSError, subprocess.TimeoutExpired) as e:
         return 255, "", str(e)
     return p.returncode, p.stdout, p.stderr
@@ -88,12 +89,14 @@ def conv(key: K.ConventionKey) -> str | None:
 
 # ---------------------------------------------------------------- PR state cache
 
+
 class GhLabel(TypedDict):
     name: str
 
 
 class GhPr(TypedDict):
     """One PR of `gh pr list --json` with the fields refresh() asks for."""
+
     number: int
     title: str
     headRefName: str
@@ -110,6 +113,7 @@ class GhPr(TypedDict):
 
 class GhRun(TypedDict, total=False):
     """`gh run list --json databaseId,status,conclusion,url,headSha`."""
+
     databaseId: int
     status: str
     conclusion: str
@@ -123,6 +127,7 @@ class RunError(TypedDict):
 
 class PrRow(TypedDict):
     """A row of GET /api/prs."""
+
     number: int
     title: str
     branch: str
@@ -137,7 +142,7 @@ class PrRow(TypedDict):
     is_train: bool
     constituents: list[int]
     verify_run: GhRun | RunError | None
-    body: NotRequired[str]            # dropped once the summary is made
+    body: NotRequired[str]  # dropped once the summary is made
     status: NotRequired[P.Verdict]
     summary: NotRequired[str]
     url: NotRequired[str]
@@ -145,6 +150,7 @@ class PrRow(TypedDict):
 
 class CacheData(TypedDict):
     """GET /api/prs."""
+
     prs: list[PrRow]
     fetched_at: float | None
     error: str | None
@@ -177,8 +183,9 @@ class Cache:
                 return
             self.data["refreshing"] = True
         try:
-            fields = ("number,title,headRefName,headRefOid,baseRefName,author,createdAt,"
-                      "labels,reviews,comments,isDraft,body")
+            fields = (
+                "number,title,headRefName,headRefOid,baseRefName,author,createdAt,labels,reviews,comments,isDraft,body"
+            )
             prs: list[GhPr] = gh_json(["pr", "list", "--state", "open", "--limit", "300", "--json", fields])
             rows = [self._row(p) for p in prs]
             with concurrent.futures.ThreadPoolExecutor(CONFIG["concurrency"]) as ex:
@@ -199,14 +206,21 @@ class Cache:
         branch = p["headRefName"]
         prefix = conv("train_branch_prefix")
         return {
-            "number": p["number"], "title": p["title"], "branch": branch,
-            "scope": P.scope_of(branch), "author": (p.get("author") or {}).get("login", ""),
-            "head": p["headRefOid"], "base": p["baseRefName"], "created_at": p["createdAt"],
+            "number": p["number"],
+            "title": p["title"],
+            "branch": branch,
+            "scope": P.scope_of(branch),
+            "author": (p.get("author") or {}).get("login", ""),
+            "head": p["headRefOid"],
+            "base": p["baseRefName"],
+            "created_at": p["createdAt"],
             "draft": p.get("isDraft", False),
             "labels": [lb["name"] for lb in p.get("labels") or []],
             "review": P.review_state(p.get("reviews"), p.get("comments")),
             "is_train": bool(prefix) and branch.startswith(prefix or ""),
-            "constituents": [], "verify_run": None, "body": p.get("body") or "",
+            "constituents": [],
+            "verify_run": None,
+            "body": p.get("body") or "",
         }
 
     def _enrich(self, r: PrRow) -> None:
@@ -230,13 +244,29 @@ class Cache:
             with contextlib.suppress(Exception):
                 commits: list[dict[str, str]] = gh_json(["pr", "view", str(n), "--json", "commits"])["commits"]
                 msgs = [c.get("messageHeadline", "") + "\n" + c.get("messageBody", "") for c in commits]
-            r["constituents"] = P.train_constituents(r["title"], r.get("body", ""), msgs,
-                                                     conv("train_title_prefix") or "")
+            r["constituents"] = P.train_constituents(
+                r["title"], r.get("body", ""), msgs, conv("train_title_prefix") or ""
+            )
             workflow = conv("verify_workflow")
             try:
-                runs: list[GhRun] = gh_json(["run", "list", "--workflow", workflow, "--branch", r["branch"],
-                                             "-L", "1", "--json", "databaseId,status,conclusion,url,headSha"]) \
-                    if workflow else []
+                runs: list[GhRun] = (
+                    gh_json(
+                        [
+                            "run",
+                            "list",
+                            "--workflow",
+                            workflow,
+                            "--branch",
+                            r["branch"],
+                            "-L",
+                            "1",
+                            "--json",
+                            "databaseId,status,conclusion,url,headSha",
+                        ]
+                    )
+                    if workflow
+                    else []
+                )
                 r["verify_run"] = runs[0] if runs else None
             except Exception as e:  # noqa: BLE001
                 r["verify_run"] = {"error": str(e)}
@@ -273,6 +303,7 @@ def refresher() -> None:
 
 
 # ---------------------------------------------------------------- sessions
+
 
 def pid_alive(pid: int) -> bool:
     try:
@@ -312,6 +343,7 @@ class TrainStatus(TypedDict):
 
 class SessionsView(TypedDict):
     """GET /api/sessions."""
+
     groups: dict[str, list[SessionWorktree]]
     reverify_locks: list[LockView]
     reverify_state_dir: str
@@ -324,7 +356,9 @@ def sessions() -> SessionsView:
         raise RuntimeError(err)
     wts = P.parse_porcelain(out)
     try:
-        merged: list[GhPr] = gh_json(["pr", "list", "--state", "merged", "--limit", "300", "--json", "number,headRefName"])
+        merged: list[GhPr] = gh_json(
+            ["pr", "list", "--state", "merged", "--limit", "300", "--json", "number,headRefName"]
+        )
     except Exception:  # noqa: BLE001
         merged = []
     merged_by_branch = {m["headRefName"]: m["number"] for m in merged}
@@ -341,17 +375,23 @@ def sessions() -> SessionsView:
         reason = P.parse_lock_reason(wt["lock_reason"]) if wt["locked"] else None
         lk: ClaudeLock | None = {**reason, "alive": pid_alive(reason["pid"])} if reason else None
         is_main = str(Path(wt["path"]).resolve()) == main
-        w: SessionWorktree = {**wt, "dirty": dirty, "open_pr": open_pr, "merged_pr": merged_pr,
-                              "claude_lock": lk, "is_main": is_main,
-                              "ready_to_clean": bool(not is_main and dirty is False and not wt["locked"]
-                                                     and merged_pr and not open_pr)}
+        w: SessionWorktree = {
+            **wt,
+            "dirty": dirty,
+            "open_pr": open_pr,
+            "merged_pr": merged_pr,
+            "claude_lock": lk,
+            "is_main": is_main,
+            "ready_to_clean": bool(not is_main and dirty is False and not wt["locked"] and merged_pr and not open_pr),
+        }
         if w["is_main"]:
             key = "main checkout"
         elif lk:
             key = f"{lk['agent']} (pid {lk['pid']}, {'alive' if lk['alive'] else 'gone'})"
         else:
-            key = next((g for g, prefix in wt_groups.items() if f"/{wt_dir}/{prefix}" in w["path"]),
-                       "unlocked worktrees")
+            key = next(
+                (g for g, prefix in wt_groups.items() if f"/{wt_dir}/{prefix}" in w["path"]), "unlocked worktrees"
+            )
         groups.setdefault(key, []).append(w)
     rc, common, _ = run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"])
     locks: list[LockView] = []
@@ -368,20 +408,30 @@ def sessions() -> SessionsView:
                 holder = None
             argv = command("reverify_status", pr=int(n))
             st = run(argv, timeout=30)[1] if argv else ""
-            locks.append({"pr": int(n), "holder": holder,
-                          "alive": bool(holder and pid_alive(holder["pid"])),
-                          "status": st.strip()})
+            locks.append(
+                {
+                    "pr": int(n),
+                    "holder": holder,
+                    "alive": bool(holder and pid_alive(holder["pid"])),
+                    "status": st.strip(),
+                }
+            )
     train_status: list[TrainStatus] = []
     for r in CACHE.snapshot()["prs"]:
         argv = command("reverify_status", pr=r["number"]) if r["is_train"] else None
         if argv:
             rc2, st, _ = run(argv, timeout=30)
             train_status.append({"pr": r["number"], "exit": rc2, "status": st.strip()})
-    return {"groups": groups, "reverify_locks": locks, "reverify_state_dir": str(state_dir or ""),
-            "train_reverify_status": train_status}
+    return {
+        "groups": groups,
+        "reverify_locks": locks,
+        "reverify_state_dir": str(state_dir or ""),
+        "train_reverify_status": train_status,
+    }
 
 
 # ---------------------------------------------------------------- actions
+
 
 class Job(TypedDict):
     id: str
@@ -456,8 +506,7 @@ def build_action(body: dict[str, object]) -> tuple[JobKey, list[str]]:
         without = [pr(v) for v in _items(body.get("without"), "without")]
         if not without:
             raise P.ValidationError("--without needs at least one PR")
-        return "train", _configured(command("rebuild", train=t, without=without,
-                                            dry_run=dry_run(body, "rebuild")))
+        return "train", _configured(command("rebuild", train=t, without=without, dry_run=dry_run(body, "rebuild")))
     if kind == "cleanup":
         b = P.validate_branch(body.get("branch", ""))
         return "branch:" + b, _configured(command("cleanup", branch=b, apply=bool(body.get("apply"))))
@@ -479,14 +528,28 @@ def start_job(key: JobKey, argv: list[str]) -> Job:
             raise P.ValidationError(f"an action for {key} is already running")
         BUSY.add(key)
         jid = secrets.token_hex(6)
-        job: Job = {"id": jid, "key": key, "argv": argv, "started": time.time(), "output": [],
-               "exit": None, "ended": None}
+        job: Job = {
+            "id": jid,
+            "key": key,
+            "argv": argv,
+            "started": time.time(),
+            "output": [],
+            "exit": None,
+            "ended": None,
+        }
         JOBS[jid] = job
 
     def worker() -> None:
         try:
-            p = subprocess.Popen(argv, cwd=CONFIG["repo"], env=ENV, stdout=subprocess.PIPE,
-                                 stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, text=True)
+            p = subprocess.Popen(
+                argv,
+                cwd=CONFIG["repo"],
+                env=ENV,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                text=True,
+            )
             for line in p.stdout or ():
                 job["output"].append(line.rstrip("\n"))
             job["exit"] = p.wait()
@@ -506,8 +569,14 @@ def start_job(key: JobKey, argv: list[str]) -> Job:
 
 def job_record(job: Job) -> dict[str, object]:
     """What actions.jsonl keeps of a job, before its output tail."""
-    return {"id": job["id"], "key": job["key"], "argv": job["argv"], "started": job["started"],
-            "ended": job["ended"], "exit": job["exit"]}
+    return {
+        "id": job["id"],
+        "key": job["key"],
+        "argv": job["argv"],
+        "started": job["started"],
+        "ended": job["ended"],
+        "exit": job["exit"],
+    }
 
 
 # ---------------------------------------------------------------- HTTP
@@ -515,13 +584,23 @@ def job_record(job: Job) -> dict[str, object]:
 DIST = HERE / "web" / "dist"
 LEGACY = HERE / "static"
 LEGACY_ASSETS = ("/app.js", "/app.css")
-CONTENT_TYPES = {".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css",
-                 ".map": "application/json", ".svg": "image/svg+xml", ".png": "image/png",
-                 ".ico": "image/x-icon", ".woff2": "font/woff2", ".woff": "font/woff"}
+CONTENT_TYPES = {
+    ".js": "text/javascript",
+    ".mjs": "text/javascript",
+    ".css": "text/css",
+    ".map": "application/json",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".ico": "image/x-icon",
+    ".woff2": "font/woff2",
+    ".woff": "font/woff",
+}
 # The 403 page for `/` without a token: assets/unlock.js re-enters with this tab's stored token.
-UNLOCK_PAGE = (b'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>PR console</title></head>'
-               b'<body><p id="msg">Missing token. Open the URL that server.py printed.</p>'
-               b'<script src="/assets/unlock.js"></script></body></html>')
+UNLOCK_PAGE = (
+    b'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>PR console</title></head>'
+    b'<body><p id="msg">Missing token. Open the URL that server.py printed.</p>'
+    b'<script src="/assets/unlock.js"></script></body></html>'
+)
 
 
 def ui_dir() -> Path | None:
@@ -542,7 +621,7 @@ def static_asset(ui: Path | None, path: str) -> tuple[Path, str] | None:
         return None
     if not path.startswith("/assets/"):
         return None
-    name = urllib.parse.unquote(path[len("/assets/"):])
+    name = urllib.parse.unquote(path[len("/assets/") :])
     if not name or "\\" in name or "\0" in name or any(part in ("", ".", "..") for part in name.split("/")):
         return None
     root = (DIST / "assets").resolve()
@@ -602,7 +681,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._send(403, {"error": "missing or wrong token"})
         if path in ("/", "/index.html"):
             if ui is None:
-                return self._send(503, b"No UI built: run `npm ci && npm run build` in web/.", "text/plain; charset=utf-8")
+                return self._send(
+                    503, b"No UI built: run `npm ci && npm run build` in web/.", "text/plain; charset=utf-8"
+                )
             return self._send(200, (ui / "index.html").read_bytes(), "text/html; charset=utf-8")
         if path == "/api/config":
             return self._send(200, K.public(CFG))
@@ -665,6 +746,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def _chats_get(self, path: str) -> None:
         import chats as C
+
         if CHATS is None:
             return self._send(503, {"error": CHATS_ERROR})
         try:
@@ -707,6 +789,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def _chats_post(self, path: str, body: dict[str, object]) -> None:
         import chats as C
+
         if CHATS is None:
             return self._send(503, {"error": CHATS_ERROR})
         try:
@@ -718,8 +801,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 cwd = C.validate_cwd(main, dirs)  # a coordinator works from the main checkout
                 prompt = C.validate_prompt(body.get("prompt"))
                 model = C.validate_choice(body.get("model"), C.MODELS, "model")
-                mode = C.validate_choice(body.get("permission_mode") or "auto", C.PERMISSION_MODES,
-                                         "permission mode")
+                mode = C.validate_choice(body.get("permission_mode") or "auto", C.PERMISSION_MODES, "permission mode")
                 return self._send(201, CHATS.launch(cwd, prompt, model, mode))
             if path == "/api/chats/resume":
                 cid = C.validate_session_id(body.get("id"))
@@ -755,6 +837,7 @@ BRANCH_CACHE: dict[str, tuple[float, str]] = {}  # cwd -> (time, branch)
 
 class ChatRow(TypedDict):
     """A row of GET /api/chats: the chat, with the branch of its directory and that branch's PR."""
+
     id: str
     cwd: str
     created: float
@@ -772,6 +855,7 @@ class ChatRow(TypedDict):
 
 def chat_dirs() -> "list[C.ChatDir]":
     import chats as C
+
     return C.worktree_dirs(CONFIG["repo"])
 
 
@@ -790,17 +874,18 @@ def chat_rows(chats: "C.ChatManager") -> list[ChatRow]:
     rows: list[ChatRow] = []
     for r in chats.list():
         branch = branch_of(r["cwd"])
-        rows.append({**r, "branch": branch,
-                     "open_pr": open_by_branch.get(branch) if branch not in ("", "HEAD") else None})
+        rows.append(
+            {**r, "branch": branch, "open_pr": open_by_branch.get(branch) if branch not in ("", "HEAD") else None}
+        )
     return rows
-
 
 
 STOPPING = threading.Event()
 
 
-def start_chats(state_dir: str, client_factory: "C.ClientFactory | None" = None,
-                prompt_append: str = "") -> "C.ChatManager | None":
+def start_chats(
+    state_dir: str, client_factory: "C.ClientFactory | None" = None, prompt_append: str = ""
+) -> "C.ChatManager | None":
     """Start the chat manager, or leave chats off when the SDK is not installed."""
     global CHATS  # noqa: PLW0603  one chat manager per process, read by every request handler
     try:
@@ -809,6 +894,7 @@ def start_chats(state_dir: str, client_factory: "C.ClientFactory | None" = None,
         print(CHATS_ERROR, flush=True)
         return None
     import chats as C
+
     CHATS = C.ChatManager(state_dir, client_factory, prompt_append)
     return CHATS
 
@@ -816,8 +902,11 @@ def start_chats(state_dir: str, client_factory: "C.ClientFactory | None" = None,
 def main() -> None:
     global TOKEN  # noqa: PLW0603  the token is fixed once at startup, read by every request handler
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", default=os.environ.get("PR_CONSOLE_CONFIG"),
-                    help="the per-repo TOML config (else $PR_CONSOLE_CONFIG); see examples/")
+    ap.add_argument(
+        "--config",
+        default=os.environ.get("PR_CONSOLE_CONFIG"),
+        help="the per-repo TOML config (else $PR_CONSOLE_CONFIG); see examples/",
+    )
     ap.add_argument("--port", type=int, default=CONFIG["port"])
     ap.add_argument("--chats-dir", default=str(HERE / "chats"))
     a = ap.parse_args()

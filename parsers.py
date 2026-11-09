@@ -21,6 +21,7 @@ class Verdict(TypedDict):
 
 class Worktree(TypedDict):
     """One entry of `git worktree list --porcelain`."""
+
     path: str
     head: str
     branch: str
@@ -48,6 +49,7 @@ class GhAuthor(TypedDict, total=False):
 
 class GhReview(TypedDict, total=False):
     """A review in `gh pr list --json reviews`; only the keys read here."""
+
     state: str
     submittedAt: str
     author: GhAuthor | None
@@ -55,6 +57,7 @@ class GhReview(TypedDict, total=False):
 
 class GhComment(TypedDict, total=False):
     """A comment in `gh pr list --json comments`; only the keys read here."""
+
     createdAt: str
     body: str | None
 
@@ -102,11 +105,11 @@ def parse_verdict(output: str, n: int, verdicts: dict[str, str]) -> Verdict:
     for line in reversed(output.splitlines()):
         if not line.startswith(prefix):
             continue
-        rest = line[len(prefix):].strip()
+        rest = line[len(prefix) :].strip()
         if rest in ready:
             return {"verdict": rest, "reasons": [], "line": line}
         if rest.startswith(not_ready + ":"):
-            reasons = [r.strip() for r in rest[len(not_ready) + 1:].split(";") if r.strip()]
+            reasons = [r.strip() for r in rest[len(not_ready) + 1 :].split(";") if r.strip()]
             return {"verdict": not_ready, "reasons": reasons, "line": line}
     return {"verdict": "UNKNOWN", "reasons": [], "line": ""}
 
@@ -125,8 +128,16 @@ def parse_porcelain(text: str) -> list[Worktree]:
         if key == "worktree":
             if cur:
                 out.append(cur)
-            cur = {"path": val, "head": "", "branch": "", "detached": False, "bare": False,
-                   "locked": False, "lock_reason": "", "prunable": False}
+            cur = {
+                "path": val,
+                "head": "",
+                "branch": "",
+                "detached": False,
+                "bare": False,
+                "locked": False,
+                "lock_reason": "",
+                "prunable": False,
+            }
         elif cur is None:
             continue
         elif key == "HEAD":
@@ -170,8 +181,9 @@ _BODY_RE = re.compile(r"^- #(\d+)\b", re.M)
 _MERGE_RE = re.compile(r"^Merge pull request #(\d+) from ", re.M)
 
 
-def train_constituents(title: str = "", body: str | None = "", commit_messages: Iterable[str] = (),
-                       title_prefix: str = "") -> list[int]:
+def train_constituents(
+    title: str = "", body: str | None = "", commit_messages: Iterable[str] = (), title_prefix: str = ""
+) -> list[int]:
     """Constituent PRs of a train, in order: the body's `- #<n>` lines, else the merge
     commits, else the `#<n>` after the first comma of a title that starts with `title_prefix`."""
     nums = [int(x) for x in _BODY_RE.findall(body or "")]
@@ -198,8 +210,12 @@ def review_state(reviews: list[GhReview] | None, comments: list[GhComment] | Non
             lines = [ln for ln in (c.get("body") or "").splitlines() if ln.strip()]
             if lines and lines[-1].strip() == MARKER:
                 answered = True
-    return {"state": last.get("state", ""), "author": (last.get("author") or {}).get("login", ""),
-            "at": last["submittedAt"], "answered": answered}
+    return {
+        "state": last.get("state", ""),
+        "author": (last.get("author") or {}).get("login", ""),
+        "at": last["submittedAt"],
+        "answered": answered,
+    }
 
 
 def pr_summary(body: str | None, limit: int = 700) -> str:

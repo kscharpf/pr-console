@@ -22,41 +22,99 @@ NOW = time.time()
 
 
 def pr(  # noqa: PLR0913, PLR0917  a fixture builder: each keyword is one field of a PR row
-    n: int, title: str, verdict: str, reasons: Iterable[str] = (), labels: Iterable[str] = (),
-       train: bool = False, review: str = "APPROVED", answered: bool = True) -> server.PrRow:
+    n: int,
+    title: str,
+    verdict: str,
+    reasons: Iterable[str] = (),
+    labels: Iterable[str] = (),
+    train: bool = False,
+    review: str = "APPROVED",
+    answered: bool = True,
+) -> server.PrRow:
     branch = f"train/2026-11-08-{n}" if train else f"m3/wp-{n}"
     return {
-        "number": n, "title": title, "branch": branch, "scope": branch.split("/", maxsplit=1)[0] + "/",
-        "author": "octo", "head": f"{n:07d}abcdef", "base": "main",
-        "created_at": "2026-11-07T10:00:00Z", "draft": False, "labels": list(labels),
+        "number": n,
+        "title": title,
+        "branch": branch,
+        "scope": branch.split("/", maxsplit=1)[0] + "/",
+        "author": "octo",
+        "head": f"{n:07d}abcdef",
+        "base": "main",
+        "created_at": "2026-11-07T10:00:00Z",
+        "draft": False,
+        "labels": list(labels),
         "review": {"state": review, "author": "reviewer", "at": "2026-11-07T11:00:00Z", "answered": answered},
-        "is_train": train, "constituents": [102, 101] if train else [],
-        "summary": f"Summary of #{n}.", "url": f"https://github.com/example/none/pull/{n}",
-        "verify_run": ({"databaseId": 7, "status": "completed", "conclusion": "success",
-                        "url": "https://example.invalid/run/7", "headSha": "abc"} if train else None),
+        "is_train": train,
+        "constituents": [102, 101] if train else [],
+        "summary": f"Summary of #{n}.",
+        "url": f"https://github.com/example/none/pull/{n}",
+        "verify_run": (
+            {
+                "databaseId": 7,
+                "status": "completed",
+                "conclusion": "success",
+                "url": "https://example.invalid/run/7",
+                "headSha": "abc",
+            }
+            if train
+            else None
+        ),
         "status": {"verdict": verdict, "reasons": list(reasons), "line": f"#{n}: {verdict}"},
     }
 
 
 PRS = [
     pr(200, "chore(train): 2026-11-08-200, #102, #101", "READY", train=True),
-    pr(103, "feat(m3/wp-3c): not ready yet", "NOT READY", reasons=["no review", "verify missing"],
-       review="CHANGES_REQUESTED", answered=False),
+    pr(
+        103,
+        "feat(m3/wp-3c): not ready yet",
+        "NOT READY",
+        reasons=["no review", "verify missing"],
+        review="CHANGES_REQUESTED",
+        answered=False,
+    ),
     pr(102, "feat(m3/wp-3b): second", "READY FOR TRAIN", labels=["needs-maintainer"]),
     pr(101, "feat(m3/wp-3a): first", "READY FOR TRAIN"),
 ]
 
 SESSIONS: server.SessionsView = {
     "groups": {
-        "main checkout": [{
-            "path": "/repo", "head": "aaa", "branch": "main", "detached": False, "bare": False,
-            "locked": False, "lock_reason": "", "prunable": False, "dirty": False, "open_pr": None,
-            "merged_pr": None, "claude_lock": None, "is_main": True, "ready_to_clean": False}],
-        "unlocked worktrees": [{
-            "path": "/repo/.claude/worktrees/agent-1", "head": "bbb", "branch": "m3/wp-done",
-            "detached": False, "bare": False, "locked": False, "lock_reason": "", "prunable": False,
-            "dirty": False, "open_pr": None, "merged_pr": 99, "claude_lock": None, "is_main": False,
-            "ready_to_clean": True}],
+        "main checkout": [
+            {
+                "path": "/repo",
+                "head": "aaa",
+                "branch": "main",
+                "detached": False,
+                "bare": False,
+                "locked": False,
+                "lock_reason": "",
+                "prunable": False,
+                "dirty": False,
+                "open_pr": None,
+                "merged_pr": None,
+                "claude_lock": None,
+                "is_main": True,
+                "ready_to_clean": False,
+            }
+        ],
+        "unlocked worktrees": [
+            {
+                "path": "/repo/.claude/worktrees/agent-1",
+                "head": "bbb",
+                "branch": "m3/wp-done",
+                "detached": False,
+                "bare": False,
+                "locked": False,
+                "lock_reason": "",
+                "prunable": False,
+                "dirty": False,
+                "open_pr": None,
+                "merged_pr": 99,
+                "claude_lock": None,
+                "is_main": False,
+                "ready_to_clean": True,
+            }
+        ],
     },
     "reverify_locks": [],
     "reverify_state_dir": "/repo/.git/reverify",
@@ -70,8 +128,15 @@ def fake_start_job(key: server.JobKey, argv: list[str]) -> server.Job:
         out = [f"fake run of {' '.join(argv)}"]
         if "cleanup-merged" in argv[0] and "--apply" not in argv:
             out.append("would remove worktree /repo/.claude/worktrees/agent-1 and branch m3/wp-done")
-        job: server.Job = {"id": jid, "key": key, "argv": argv, "started": time.time(), "output": out,
-               "exit": 0, "ended": time.time()}
+        job: server.Job = {
+            "id": jid,
+            "key": key,
+            "argv": argv,
+            "started": time.time(),
+            "output": out,
+            "exit": 0,
+            "ended": time.time(),
+        }
         server.JOBS[jid] = job
     server.log_action(server.job_record(job) | {"output_tail": out})
     return job
@@ -81,9 +146,12 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8798)
     ap.add_argument("--chats-dir", default=None, help="keep chats here (to test a restart)")
-    ap.add_argument("--config", default=str(Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "console.toml"))
+    ap.add_argument(
+        "--config", default=str(Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "console.toml")
+    )
     a = ap.parse_args()
     import config
+
     cfg = config.load(a.config)
     server.use_config(cfg)
     log = Path(tempfile.mkdtemp(prefix="pr-console-test-")) / "actions.jsonl"
@@ -98,6 +166,7 @@ def main() -> None:
     # Chats: the real ChatManager and SDK client over a fake CLI transport, in scratch directories.
     import chats
     import fake_sdk
+
     work = Path(a.chats_dir or tempfile.mkdtemp(prefix="pr-console-chats-"))
     dirs: list[chats.ChatDir] = []
     for name, branch, is_main in (("main", "main", True), ("wt-102", "m3/wp-102", False)):

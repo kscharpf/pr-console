@@ -41,11 +41,11 @@ ClientFactory = Callable[["ClaudeAgentOptions"], "ClaudeSDKClient"]
 
 SESSION_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 REQ_RE = re.compile(r"^[0-9a-f]{16}$")
-MAX_PROMPT = 16_000          # characters
+MAX_PROMPT = 16_000  # characters
 
-MAX_LIVE = 8                 # connected sessions at once
-MAX_TOOL_TEXT = 20_000       # characters of a tool result kept
-BUFFER_COMPACT = 4000        # events in memory before superseded deltas are dropped
+MAX_LIVE = 8  # connected sessions at once
+MAX_TOOL_TEXT = 20_000  # characters of a tool result kept
+BUFFER_COMPACT = 4000  # events in memory before superseded deltas are dropped
 # Modes that still ask before acting. Never "bypassPermissions", "acceptEdits", "auto" or "dontAsk".
 PERMISSION_MODES = ("auto", "default", "plan")  # auto first: the maintainer's terminal default
 MODELS = ("", "opus", "sonnet", "haiku")  # "" = the CLI's default
@@ -58,6 +58,7 @@ class ChatError(Exception):
 
 class ChatMeta(TypedDict):
     """A registry entry (chats/registry.json)."""
+
     id: str
     cwd: str
     created: float
@@ -75,6 +76,7 @@ class ChatDir(TypedDict):
 
 class PendingPermission(TypedDict):
     """A can_use_tool request waiting for the page."""
+
     req_id: str
     chat: str
     tool: str
@@ -88,6 +90,7 @@ class PendingPermission(TypedDict):
 
 class ChatPublic(TypedDict):
     """A chat as GET /api/chats lists it; the server adds branch and open_pr."""
+
     id: str
     cwd: str
     created: float
@@ -102,6 +105,7 @@ class ChatPublic(TypedDict):
 
 
 # ---------------------------------------------------------------- validation
+
 
 def validate_session_id(v: object) -> str:
     if not isinstance(v, str) or not SESSION_RE.match(v):
@@ -127,17 +131,27 @@ def validate_choice(v: object, allowed: tuple[str, ...], what: str) -> str:
 def worktree_dirs(repo: str) -> list[ChatDir]:
     """[{path, branch, is_main}] of `git worktree list --porcelain` in repo (bare and prunable ones left out)."""
     import parsers as P
+
     try:
         # check=False: a non-zero exit is turned into a ChatError below
-        p = subprocess.run(["git", "worktree", "list", "--porcelain"], cwd=repo, capture_output=True,
-                           text=True, timeout=30, check=False)
+        p = subprocess.run(
+            ["git", "worktree", "list", "--porcelain"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
     except (OSError, subprocess.TimeoutExpired) as e:
         raise ChatError(f"git worktree list failed: {e}") from e
     if p.returncode != 0:
         raise ChatError(f"git worktree list failed: {p.stderr.strip()}")
     main = str(Path(repo).resolve())
-    return [{"path": w["path"], "branch": w["branch"], "is_main": str(Path(w["path"]).resolve()) == main}
-            for w in P.parse_porcelain(p.stdout) if not w["bare"] and not w["prunable"]]
+    return [
+        {"path": w["path"], "branch": w["branch"], "is_main": str(Path(w["path"]).resolve()) == main}
+        for w in P.parse_porcelain(p.stdout)
+        if not w["bare"] and not w["prunable"]
+    ]
 
 
 def validate_cwd(v: object, dirs: list[ChatDir]) -> str:
@@ -152,6 +166,7 @@ def validate_cwd(v: object, dirs: list[ChatDir]) -> str:
 
 
 # ---------------------------------------------------------------- event buffer
+
 
 class EventBuffer:
     """Events of one chat with increasing ids, for replay after a reconnect.
@@ -208,6 +223,7 @@ def transcript_events(session_id: str, cwd: str) -> list[Event]:
     """Events rebuilt from Claude Code's saved transcript, for a session the console has no log of."""
     try:
         from claude_agent_sdk import get_session_messages
+
         msgs = get_session_messages(session_id, directory=cwd)
     except Exception:  # noqa: BLE001 - no transcript, or an unreadable one
         return []
@@ -223,11 +239,19 @@ def transcript_events(session_id: str, cwd: str) -> list[Event]:
             if b.get("type") == "text":
                 ev = {"kind": "user" if m.type == "user" else "text", "text": b.get("text", "")}
             elif b.get("type") == "tool_use":
-                ev = {"kind": "tool_use", "tool_use_id": b.get("id", ""), "name": b.get("name", ""),
-                      "input": b.get("input") or {}}
+                ev = {
+                    "kind": "tool_use",
+                    "tool_use_id": b.get("id", ""),
+                    "name": b.get("name", ""),
+                    "input": b.get("input") or {},
+                }
             elif b.get("type") == "tool_result":
-                ev = {"kind": "tool_result", "tool_use_id": b.get("tool_use_id", ""),
-                      "content": tool_text(b.get("content")), "is_error": bool(b.get("is_error"))}
+                ev = {
+                    "kind": "tool_result",
+                    "tool_use_id": b.get("tool_use_id", ""),
+                    "content": tool_text(b.get("content")),
+                    "is_error": bool(b.get("is_error")),
+                }
             if ev:
                 out.append({"id": n, "t": 0, **ev})
                 n += 1
@@ -240,14 +264,16 @@ def tool_text(content: object) -> str:
     if isinstance(content, str):
         s = content
     elif isinstance(content, list):
-        s = "\n".join(c.get("text", "") if isinstance(c, dict) and c.get("type") == "text"
-                      else json.dumps(c) for c in content)
+        s = "\n".join(
+            c.get("text", "") if isinstance(c, dict) and c.get("type") == "text" else json.dumps(c) for c in content
+        )
     else:
         s = json.dumps(content)
     return s if len(s) <= MAX_TOOL_TEXT else s[:MAX_TOOL_TEXT] + f"\n… ({len(s) - MAX_TOOL_TEXT} more characters)"
 
 
 # ---------------------------------------------------------------- chats
+
 
 class Chat:
     def __init__(self, meta: ChatMeta, buffer: EventBuffer) -> None:
@@ -272,13 +298,19 @@ class Chat:
         return ev
 
     def public(self) -> ChatPublic:
-        return {**self.meta, "status": self.status, "last_activity": self.last_activity,
-                "pending": list(self.pending_public), "last_event_id": self.buffer.next_id - 1}
+        return {
+            **self.meta,
+            "status": self.status,
+            "last_activity": self.last_activity,
+            "pending": list(self.pending_public),
+            "last_event_id": self.buffer.next_id - 1,
+        }
 
 
 class ChatManager:
-    def __init__(self, state_dir: str | Path, client_factory: ClientFactory | None = None,
-                 prompt_append: str = "") -> None:
+    def __init__(
+        self, state_dir: str | Path, client_factory: ClientFactory | None = None, prompt_append: str = ""
+    ) -> None:
         # Every console chat is the repo's coordinator: the config's [coordinator] prompt_append
         # names the role and where the managed repo keeps its rules.
         self.prompt_append = prompt_append
@@ -294,7 +326,9 @@ class ChatManager:
             if isinstance(meta.get("id"), str) and SESSION_RE.match(meta["id"]):
                 buf = EventBuffer.load(self._log(meta["id"]))
                 if not buf.events:
-                    buf = EventBuffer(self._log(meta["id"]), transcript_events(meta.get("resume_id") or meta["id"], meta["cwd"]))
+                    buf = EventBuffer(
+                        self._log(meta["id"]), transcript_events(meta.get("resume_id") or meta["id"], meta["cwd"])
+                    )
                 self.chats[meta["id"]] = Chat(meta, buf)
 
     # -- registry
@@ -339,8 +373,15 @@ class ChatManager:
             if self._live_count() >= MAX_LIVE:
                 raise ChatError(f"{MAX_LIVE} sessions are connected; end one first")
             cid = str(uuid.uuid4())
-            meta: ChatMeta = {"id": cid, "cwd": cwd, "created": time.time(), "title": title_of(prompt),
-                    "model": model, "permission_mode": permission_mode, "resume_id": None}
+            meta: ChatMeta = {
+                "id": cid,
+                "cwd": cwd,
+                "created": time.time(),
+                "title": title_of(prompt),
+                "model": model,
+                "permission_mode": permission_mode,
+                "resume_id": None,
+            }
             chat = Chat(meta, EventBuffer(self._log(cid)))
             self.chats[cid] = chat
             self._write_registry()
@@ -355,8 +396,15 @@ class ChatManager:
             if chat is None:
                 if cwd is None:
                     raise ChatError("give the working directory of a session the console did not start")
-                meta = ChatMeta(id=cid, cwd=cwd, created=time.time(), title=f"resumed {cid[:8]}",
-                                model="", permission_mode="auto", resume_id=cid)
+                meta = ChatMeta(
+                    id=cid,
+                    cwd=cwd,
+                    created=time.time(),
+                    title=f"resumed {cid[:8]}",
+                    model="",
+                    permission_mode="auto",
+                    resume_id=cid,
+                )
                 chat = Chat(meta, EventBuffer(self._log(cid), transcript_events(cid, cwd)))
                 for ev in chat.buffer.events:  # persist the transcript as this chat's log
                     with self._log(cid).open("a", encoding="utf-8") as fh:
@@ -404,6 +452,7 @@ class ChatManager:
             tasks = [c.task for c in self.chats.values() if c.task is not None]
             if tasks:
                 await asyncio.wait(tasks, timeout=10)
+
         # Best effort at exit: a session that does not stop in time dies with the process.
         with contextlib.suppress(Exception):
             self._call(stop_all(), timeout=15)
@@ -438,13 +487,22 @@ class ChatManager:
         inbox = chat.inbox
         assert inbox is not None  # noqa: S101  narrows the type; _start sets it before it starts this task
 
-        async def can_use_tool(tool_name: str, tool_input: dict[str, Any], ctx: "ToolPermissionContext"
-                               ) -> "PermissionResultAllow | PermissionResultDeny":
+        async def can_use_tool(
+            tool_name: str, tool_input: dict[str, Any], ctx: "ToolPermissionContext"
+        ) -> "PermissionResultAllow | PermissionResultDeny":
             req_id = os.urandom(8).hex()
             fut: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
-            payload: PendingPermission = {"req_id": req_id, "chat": chat.meta["id"], "tool": tool_name, "input": tool_input,
-                       "tool_use_id": ctx.tool_use_id, "title": ctx.title, "description": ctx.description,
-                       "decision_reason": ctx.decision_reason, "blocked_path": ctx.blocked_path}
+            payload: PendingPermission = {
+                "req_id": req_id,
+                "chat": chat.meta["id"],
+                "tool": tool_name,
+                "input": tool_input,
+                "tool_use_id": ctx.tool_use_id,
+                "title": ctx.title,
+                "description": ctx.description,
+                "decision_reason": ctx.decision_reason,
+                "blocked_path": ctx.blocked_path,
+            }
             chat.pending[req_id] = (fut, payload)
             chat.pending_public = [p for _, p in chat.pending.values()]
             chat.emit("permission", **{k: v for k, v in payload.items() if k != "chat"})
@@ -533,6 +591,7 @@ class ChatManager:
             ToolUseBlock,
             UserMessage,
         )
+
         async for m in client.receive_messages():
             if isinstance(m, StreamEvent):
                 ev = m.event or {}
@@ -546,35 +605,56 @@ class ChatManager:
                     if isinstance(b, TextBlock):
                         chat.emit("text", text=b.text, sub=bool(m.parent_tool_use_id))
                     elif isinstance(b, ToolUseBlock):
-                        chat.emit("tool_use", tool_use_id=b.id, name=b.name, input=b.input,
-                                  sub=bool(m.parent_tool_use_id))
+                        chat.emit(
+                            "tool_use", tool_use_id=b.id, name=b.name, input=b.input, sub=bool(m.parent_tool_use_id)
+                        )
             elif isinstance(m, UserMessage):
                 if isinstance(m.content, list):
                     for b in m.content:
                         if isinstance(b, ToolResultBlock):
-                            chat.emit("tool_result", tool_use_id=b.tool_use_id, content=tool_text(b.content),
-                                      is_error=bool(b.is_error))
+                            chat.emit(
+                                "tool_result",
+                                tool_use_id=b.tool_use_id,
+                                content=tool_text(b.content),
+                                is_error=bool(b.is_error),
+                            )
             elif isinstance(m, ResultMessage):
                 if m.session_id and m.session_id != chat.meta.get("resume_id"):
                     with self.lock:
                         chat.meta["resume_id"] = m.session_id
                         self._write_registry()
-                chat.emit("result", subtype=m.subtype, is_error=m.is_error, cost=m.total_cost_usd,
-                          duration_ms=m.duration_ms, num_turns=m.num_turns, terminal_reason=m.terminal_reason,
-                          errors=m.errors or [], text=m.result if m.is_error else None)
+                chat.emit(
+                    "result",
+                    subtype=m.subtype,
+                    is_error=m.is_error,
+                    cost=m.total_cost_usd,
+                    duration_ms=m.duration_ms,
+                    num_turns=m.num_turns,
+                    terminal_reason=m.terminal_reason,
+                    errors=m.errors or [],
+                    text=m.result if m.is_error else None,
+                )
                 interrupted = (m.terminal_reason or "").startswith("aborted") or m.subtype == "error_during_execution"
                 chat.set_status("idle" if interrupted else "error" if m.is_error else "waiting")
             elif isinstance(m, SystemMessage):
                 data = m.data or {}
                 if m.subtype == "init":
-                    chat.emit("system", text=f"session {data.get('session_id', '')} · model {data.get('model', '')}"
-                                             f" · mode {data.get('permissionMode', '')}")
+                    chat.emit(
+                        "system",
+                        text=f"session {data.get('session_id', '')} · model {data.get('model', '')}"
+                        f" · mode {data.get('permissionMode', '')}",
+                    )
                 elif m.subtype == "hook_response":
                     outcome = data.get("outcome")
                     if outcome not in (None, "success") or data.get("exit_code") not in (None, 0):
-                        chat.emit("hook", event=data.get("hook_event") or data.get("hook_event_name", ""),
-                                  name=data.get("hook_name", ""), outcome=outcome, exit_code=data.get("exit_code"),
-                                  output=tool_text(data.get("stderr") or data.get("output") or data.get("stdout")))
+                        chat.emit(
+                            "hook",
+                            event=data.get("hook_event") or data.get("hook_event_name", ""),
+                            name=data.get("hook_name", ""),
+                            outcome=outcome,
+                            exit_code=data.get("exit_code"),
+                            output=tool_text(data.get("stderr") or data.get("output") or data.get("stdout")),
+                        )
 
 
 def title_of(prompt: str) -> str:
@@ -593,4 +673,5 @@ def permission_mode(v: str | None) -> "PermissionMode":
 
 def default_client(options: "ClaudeAgentOptions") -> "ClaudeSDKClient":
     from claude_agent_sdk import ClaudeSDKClient
+
     return ClaudeSDKClient(options)

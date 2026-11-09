@@ -66,8 +66,9 @@ class Worktrees(unittest.TestCase):
     def test_lock_reason(self) -> None:
         lk = P.parse_lock_reason("claude agent agent-a494d0f45342dc2a0 (pid 18687 start Sat Nov  7 12:25:04 2026)")
         self.assertEqual(lk, {"agent": "agent-a494d0f45342dc2a0", "pid": 18687, "start": "Sat Nov  7 12:25:04 2026"})
-        self.assertEqual(P.parse_lock_reason("claude agent agent-ab12 (pid 5)"),
-                         {"agent": "agent-ab12", "pid": 5, "start": ""})
+        self.assertEqual(
+            P.parse_lock_reason("claude agent agent-ab12 (pid 5)"), {"agent": "agent-ab12", "pid": 5, "start": ""}
+        )
         self.assertIsNone(P.parse_lock_reason("manual hold"))
 
     def test_reverify_lock(self) -> None:
@@ -85,8 +86,10 @@ class Trains(unittest.TestCase):
         self.assertEqual(P.train_constituents(commit_messages=msgs), [357, 12])
 
     def test_title(self) -> None:
-        self.assertEqual(P.train_constituents(title="chore(train): 2026-11-08-3, #357, #356",
-                                                title_prefix="chore(train):"), [357, 356])
+        self.assertEqual(
+            P.train_constituents(title="chore(train): 2026-11-08-3, #357, #356", title_prefix="chore(train):"),
+            [357, 356],
+        )
         self.assertEqual(P.train_constituents(title="feat: #3", title_prefix="chore(train):"), [])
         self.assertEqual(P.train_constituents(title="chore(train): x, #357"), [])  # no prefix configured
 

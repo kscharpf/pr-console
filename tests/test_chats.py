@@ -21,8 +21,18 @@ class Validation(unittest.TestCase):
     def test_session_id(self) -> None:
         ok = "1648822d-86eb-4655-bf84-6baf32bde3b6"
         self.assertEqual(C.validate_session_id(ok), ok)
-        for bad in ["", "../../etc/passwd", ok.upper(), ok + "x", ok[:-1], " " + ok, None, 7,
-                    "1648822d_86eb_4655_bf84_6baf32bde3b6", ok.replace("-", "/")]:
+        for bad in [
+            "",
+            "../../etc/passwd",
+            ok.upper(),
+            ok + "x",
+            ok[:-1],
+            " " + ok,
+            None,
+            7,
+            "1648822d_86eb_4655_bf84_6baf32bde3b6",
+            ok.replace("-", "/"),
+        ]:
             with self.assertRaises(C.ChatError, msg=repr(bad)):
                 C.validate_session_id(bad)
 
@@ -49,13 +59,23 @@ class Validation(unittest.TestCase):
             other = Path(root, "other")
             other.mkdir()
             Path(root, "link").symlink_to(wt)
-            dirs: list[C.ChatDir] = [{"path": str(main), "branch": "main", "is_main": True},
-                    {"path": str(wt), "branch": "x", "is_main": False}]
+            dirs: list[C.ChatDir] = [
+                {"path": str(main), "branch": "main", "is_main": True},
+                {"path": str(wt), "branch": "x", "is_main": False},
+            ]
             self.assertEqual(C.validate_cwd(str(main), dirs), str(main))
             self.assertEqual(C.validate_cwd(str(wt) + "/", dirs), str(wt))
             self.assertEqual(C.validate_cwd(str(Path(root, "link")), dirs), str(wt))  # same directory
-            for bad in [str(other), str(wt / ".."), str(main / ".claude"), "", None, "/", str(main) + "\0",
-                        "relative/main"]:
+            for bad in [
+                str(other),
+                str(wt / ".."),
+                str(main / ".claude"),
+                "",
+                None,
+                "/",
+                str(main) + "\0",
+                "relative/main",
+            ]:
                 with self.assertRaises(C.ChatError, msg=repr(bad)):
                     C.validate_cwd(bad, dirs)
 
@@ -71,8 +91,10 @@ class Validation(unittest.TestCase):
             run("-c", "user.email=a@b", "-c", "user.name=a", "commit", "-q", "--allow-empty", "-m", "x")
             run("worktree", "add", "-q", "-b", "feat", str(Path(t, "wt")))
             dirs = C.worktree_dirs(str(repo))
-            self.assertEqual([(Path(d["path"]).name, d["branch"], d["is_main"]) for d in dirs],
-                             [("r", "main", True), ("wt", "feat", False)])
+            self.assertEqual(
+                [(Path(d["path"]).name, d["branch"], d["is_main"]) for d in dirs],
+                [("r", "main", True), ("wt", "feat", False)],
+            )
             with self.assertRaises(C.ChatError):
                 C.worktree_dirs(t)  # not a repository
 
@@ -127,10 +149,22 @@ class Registry(unittest.TestCase):
     def test_registry_reload_marks_ended(self) -> None:
         with tempfile.TemporaryDirectory() as t:
             cid = "1648822d-86eb-4655-bf84-6baf32bde3b6"
-            Path(t, "registry.json").write_text(json.dumps([
-                {"id": cid, "cwd": t, "created": 1.0, "title": "x", "model": "", "permission_mode": "default",
-                 "resume_id": cid},
-                {"id": "../evil", "cwd": t, "created": 2.0, "title": "y"}]))
+            Path(t, "registry.json").write_text(
+                json.dumps(
+                    [
+                        {
+                            "id": cid,
+                            "cwd": t,
+                            "created": 1.0,
+                            "title": "x",
+                            "model": "",
+                            "permission_mode": "default",
+                            "resume_id": cid,
+                        },
+                        {"id": "../evil", "cwd": t, "created": 2.0, "title": "y"},
+                    ]
+                )
+            )
             Path(t, f"{cid}.jsonl").write_text(json.dumps({"id": 5, "t": 9.0, "kind": "user", "text": "hi"}) + "\n")
             m = C.ChatManager(t, client_factory=no_client)
             rows = m.list()
@@ -145,7 +179,14 @@ if __name__ == "__main__":
 
 class CoordinatorRole(unittest.TestCase):
     def test_config_prompt_names_the_role_and_the_repo_rules(self) -> None:
-        for s in ("coordinator", "AGENTS.md", "docs/process/coordinator.md", "wp-implementer", "reviewer", "merge trains"):
+        for s in (
+            "coordinator",
+            "AGENTS.md",
+            "docs/process/coordinator.md",
+            "wp-implementer",
+            "reviewer",
+            "merge trains",
+        ):
             self.assertIn(s, TEST_CONFIG["coordinator"]["prompt_append"])
 
     def test_manager_keeps_the_configured_append(self) -> None:

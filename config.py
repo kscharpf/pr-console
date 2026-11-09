@@ -36,6 +36,7 @@ class Coordinator(TypedDict):
 
 class Config(TypedDict):
     """The checked config load() returns."""
+
     name: str
     repo: str
     gh_repo: str
@@ -52,6 +53,7 @@ class PublicCoordinator(TypedDict):
 
 class PublicConfig(TypedDict):
     """GET /api/config."""
+
     name: str
     repo: str
     gh_repo: str
@@ -77,8 +79,8 @@ FLAGS = {"dry_run": "dry_run_flag", "apply": "apply_flag"}
 
 # command name -> (placeholders it must use, placeholders it may use)
 COMMANDS = {
-    "verdict": ({"pr"}, set()),          # verdict of an ordinary PR
-    "train_verdict": ({"pr"}, set()),    # verdict of a train PR
+    "verdict": ({"pr"}, set()),  # verdict of an ordinary PR
+    "train_verdict": ({"pr"}, set()),  # verdict of a train PR
     "reverify": ({"pr"}, set()),
     "reverify_cancel": ({"pr"}, set()),
     "reverify_status": ({"pr"}, set()),
@@ -87,12 +89,24 @@ COMMANDS = {
     "cleanup": ({"branch", "apply"}, set()),
 }
 # Actions of the UI and the script command each needs; merge and close need only gh.
-ACTION_COMMANDS = {"reverify": "reverify", "reverify_cancel": "reverify_cancel", "train": "train",
-                   "rebuild": "rebuild", "cleanup": "cleanup"}
+ACTION_COMMANDS = {
+    "reverify": "reverify",
+    "reverify_cancel": "reverify_cancel",
+    "train": "train",
+    "rebuild": "rebuild",
+    "cleanup": "cleanup",
+}
 
 TOP = {"name", "repo", "gh_repo", "commands", "conventions", "verdicts", "coordinator"}
-CONVENTIONS = {"train_branch_prefix", "train_title_prefix", "verify_workflow", "maintainer_label",
-               "worktrees_dir", "worktree_groups", "reverify_lock_dir"}
+CONVENTIONS = {
+    "train_branch_prefix",
+    "train_title_prefix",
+    "verify_workflow",
+    "maintainer_label",
+    "worktrees_dir",
+    "worktree_groups",
+    "reverify_lock_dir",
+}
 VERDICTS = {"ready_for_train", "ready", "not_ready"}
 COORDINATOR = {"prompt_append", "description"}
 PLACEHOLDER_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
@@ -131,8 +145,10 @@ def _template(name: str, t: object, flags: dict[str, str]) -> Template:
         names: list[str] = PLACEHOLDER_RE.findall(a)
         for p in names:
             if p not in allowed:
-                raise ConfigError(f"{where}: unknown placeholder {{{p}}} (allowed: "
-                                  f"{', '.join('{' + x + '}' for x in sorted(allowed))})")
+                raise ConfigError(
+                    f"{where}: unknown placeholder {{{p}}} (allowed: "
+                    f"{', '.join('{' + x + '}' for x in sorted(allowed))})"
+                )
             if (p in LISTS or p in FLAGS) and a != "{" + p + "}":
                 raise ConfigError(f"{where}: {{{p}}} must be a whole argument")
             if p in FLAGS and not flags.get(FLAGS[p]):
@@ -221,14 +237,26 @@ def _check(raw: dict[str, object]) -> Config:
     raw_coord = _table(raw.get("coordinator"), "coordinator", COORDINATOR)
     coord = {k: _str(v, f"coordinator.{k}", empty=True) for k, v in raw_coord.items()}
 
-    return {"name": name, "repo": str(repo), "gh_repo": gh_repo, "commands": commands, "flags": flags,
-            "conventions": conv, "verdicts": verdicts,
-            "coordinator": {"prompt_append": coord.get("prompt_append", ""),
-                            "description": coord.get("description", "")}}
+    return {
+        "name": name,
+        "repo": str(repo),
+        "gh_repo": gh_repo,
+        "commands": commands,
+        "flags": flags,
+        "conventions": conv,
+        "verdicts": verdicts,
+        "coordinator": {"prompt_append": coord.get("prompt_append", ""), "description": coord.get("description", "")},
+    }
 
 
-ConventionKey = Literal["train_branch_prefix", "train_title_prefix", "verify_workflow",
-                        "maintainer_label", "worktrees_dir", "reverify_lock_dir"]
+ConventionKey = Literal[
+    "train_branch_prefix",
+    "train_title_prefix",
+    "verify_workflow",
+    "maintainer_label",
+    "worktrees_dir",
+    "reverify_lock_dir",
+]
 
 
 def _conventions(strs: dict[str, str], groups: dict[str, str]) -> Conventions:
@@ -308,7 +336,14 @@ def expand(cfg: Config, name: str, **values: Value) -> list[str]:
 
 def public(cfg: Config) -> PublicConfig:
     """What GET /api/config shows the page: no prompt text, nothing secret."""
-    return {"name": cfg["name"], "repo": cfg["repo"], "gh_repo": cfg["gh_repo"],
-            "conventions": cfg["conventions"], "verdicts": cfg["verdicts"],
-            "commands": cfg["commands"], "flags": cfg["flags"], "actions": enabled_actions(cfg),
-            "coordinator": {"description": cfg["coordinator"]["description"]}}
+    return {
+        "name": cfg["name"],
+        "repo": cfg["repo"],
+        "gh_repo": cfg["gh_repo"],
+        "conventions": cfg["conventions"],
+        "verdicts": cfg["verdicts"],
+        "commands": cfg["commands"],
+        "flags": cfg["flags"],
+        "actions": enabled_actions(cfg),
+        "coordinator": {"description": cfg["coordinator"]["description"]},
+    }
