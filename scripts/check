@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run every check, in order, stopping at the first failure:
-#   mypy, unittest, tsc -b, npm run build, Playwright.
-# --quick runs only mypy, unittest and tsc -b.
+#   ruff check, ruff format --check, shellcheck, mypy, unittest, tsc -b, eslint, npm run build, Playwright.
+# --quick runs only ruff, shellcheck, mypy, unittest and tsc -b.
 set -euo pipefail
 
 quick=0
@@ -12,23 +12,31 @@ case "${1:-}" in
 esac
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$root"
-py="${PYTHON:-$root/.venv/bin/python}"
+cd "${root}"
+py="${PYTHON:-${root}/.venv/bin/python}"
 
 step() { printf '\n== %s\n' "$*"; }
 
+step "ruff check"
+"${py}" -m ruff check .
+step "ruff format --check"
+"${py}" -m ruff format --check .
+step shellcheck
+shellcheck -o all scripts/check
 step mypy
-"$py" -m mypy
+"${py}" -m mypy
 step unittest
-"$py" -m unittest discover -s tests
+"${py}" -m unittest discover -s tests
 step "tsc -b"
 (cd web && npx tsc -b)
-if [ "$quick" -eq 1 ]; then
-  printf '\ncheck: quick passed (mypy, unittest, tsc)\n'
+if [[ "${quick}" -eq 1 ]]; then
+  printf '\ncheck: quick passed (ruff, shellcheck, mypy, unittest, tsc)\n'
   exit 0
 fi
+step eslint
+(cd web && npm run lint)
 step "npm run build"
 (cd web && npm run build)
 step playwright
 (cd web && npx playwright test)
-printf '\ncheck: passed (mypy, unittest, tsc, build, playwright)\n'
+printf '\ncheck: passed (ruff, shellcheck, mypy, unittest, tsc, eslint, build, playwright)\n'

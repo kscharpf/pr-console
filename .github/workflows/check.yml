@@ -32,5 +32,7 @@ jobs:
       - name: Playwright browser
         working-directory: web
         run: npx playwright install --with-deps chromium
+      - name: shellcheck version  # preinstalled on ubuntu-24.04
+        run: shellcheck --version
       - name: Check
         run: scripts/check
