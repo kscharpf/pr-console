@@ -293,6 +293,8 @@ export interface ChatRow {
   permission_mode: PermissionMode;
   resume_id: string | null;
   status: ChatStatus;
+  /** A session is starting or running; only an unconnected chat can be deleted. */
+  connected: boolean;
   last_activity: number;
   pending: PendingPermission[];
   last_event_id: number;

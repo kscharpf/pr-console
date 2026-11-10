@@ -62,6 +62,12 @@ test("launch streams the reply; a follow-up continues; no CSP errors", async ({ 
   await expect(pane(page).getByTestId("msg-assistant").last()).toHaveText("echo: second question");
   await expect(pane(page).getByTestId("msg-assistant")).toHaveCount(2);
   await expect(page.getByTestId("chat-input")).toHaveValue("");
+
+  await page.getByTestId("chat-input").fill("third question");
+  await page.keyboard.press("ControlOrMeta+Enter");
+  await expect(pane(page).getByTestId("msg-assistant").last()).toHaveText("echo: third question");
+  await expect(pane(page).getByTestId("msg-assistant")).toHaveCount(3);
+  await expect(page.getByTestId("chat-input")).toHaveValue("");
   expect(ctx.errors).toEqual([]);
 });
 
@@ -199,6 +205,55 @@ test("ending a chat, then resuming it by sending", async ({ page }) => {
   await page.getByTestId("chat-send").click();
   await expect(pane(page).getByTestId("msg-assistant").last()).toHaveText("echo: after the end");
   await expect(status(page)).toHaveText("waiting for you");
+  expect(ctx.errors).toEqual([]);
+});
+
+test("deleting a chat: only when ended, through a modal that names the request", async ({ page, request }) => {
+  const h = { "X-Token": TOKEN, "Content-Type": "application/json" };
+  // Earlier tests share this server and may hold all the session slots.
+  for (const c of (await (await request.get("/api/chats", { headers: h })).json()) as { id: string; status: string }[])
+    if (c.status !== "ended") await request.post(`/api/chats/${c.id}/end`, { headers: h, data: {} });
+  const ctx = await open(page);
+  const id = await launch(page, "to delete");
+  await expect(status(page)).toHaveText("waiting for you");
+  // A connected session cannot be deleted: the button is off and the server refuses.
+  await expect(page.getByTestId("chat-delete")).toBeDisabled();
+  expect((await request.post(`/api/chats/${id}/delete`, { headers: h, data: {} })).status()).toBe(400);
+  await page.getByTestId("chat-end").click();
+  await expect(status(page)).toHaveText("ended");
+  await expect(page.getByTestId("chat-delete")).toBeEnabled(); // enabled once the session is fully disconnected
+
+  const posts: string[] = [];
+  page.on("request", (r) => {
+    if (r.method() === "POST" && r.url().endsWith("/delete")) posts.push(r.url());
+  });
+  // Cancelling sends nothing.
+  await page.getByTestId("chat-delete").click();
+  await expect(page.getByTestId("dialog-command")).toHaveText(`POST /api/chats/${id}/delete`);
+  await page.getByTestId("dialog-cancel").click();
+  await expect(page.getByTestId("dialog")).toBeHidden();
+  expect(posts).toEqual([]);
+  await expect(page.getByTestId(`chat-${id}`)).toBeVisible();
+
+  // Confirming removes the chat from the list and the pane.
+  await page.getByTestId("chat-delete").click();
+  await page.getByTestId("dialog-confirm").click();
+  await expect(page.getByTestId(`chat-${id}`)).toHaveCount(0);
+  await expect(page.getByTestId("chat-pane")).toHaveCount(0);
+  expect(posts).toHaveLength(1);
+  const rows = (await (await request.get("/api/chats", { headers: h })).json()) as { id: string }[];
+  expect(rows.map((r) => r.id)).not.toContain(id);
+  expect((await request.post(`/api/chats/${id}/delete`, { headers: h, data: {} })).status()).toBe(400);
+  expect((await request.post("/api/chats/not-an-id/delete", { headers: h, data: {} })).status()).toBe(400);
+
+  // Adopting the same session ID again starts a clean chat: the page forgot the old events.
+  await page.getByTestId("chat-new").click();
+  await page.getByTestId("chat-resume-id").fill(id);
+  await page.getByTestId("chat-resume-go").click();
+  await expect(page.getByTestId("chat-pane").getByTestId("chat-id")).toHaveText(id);
+  await page.getByTestId("chat-input").fill("back again");
+  await page.getByTestId("chat-send").click();
+  await expect(pane(page).getByTestId("msg-assistant").last()).toHaveText("echo: back again");
   expect(ctx.errors).toEqual([]);
 });
 
