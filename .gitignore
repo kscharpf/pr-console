@@ -3,3 +3,4 @@ actions.jsonl
 chats/
 .venv/
 .mypy_cache/
+/.claude/worktrees/

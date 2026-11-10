@@ -24,9 +24,18 @@ async function open(page: Page): Promise<Ctx> {
 const dialog = (page: Page) => page.getByRole("dialog");
 
 /** Click a button: the modal must name the command; Cancel sends nothing; Confirm sends `body`. */
-async function confirmFlow(page: Page, ctx: Ctx, click: () => Promise<void>, command: string, body: unknown, fill?: string) {
+async function confirmFlow(
+  page: Page,
+  ctx: Ctx,
+  click: () => Promise<void>,
+  command: string,
+  body: unknown,
+  fill?: string,
+  message?: string,
+) {
   await click();
   await expect(dialog(page)).toBeVisible();
+  if (message !== undefined) await expect(dialog(page)).toContainText(message);
   if (fill !== undefined) await page.getByTestId("dialog-input").fill(fill);
   await expect(page.getByTestId("dialog-command")).toHaveText(command);
   await page.getByTestId("dialog-cancel").click();
@@ -36,6 +45,7 @@ async function confirmFlow(page: Page, ctx: Ctx, click: () => Promise<void>, com
 
   await click();
   await expect(dialog(page)).toBeVisible();
+  if (message !== undefined) await expect(dialog(page)).toContainText(message);
   if (fill !== undefined) await page.getByTestId("dialog-input").fill(fill);
   await expect(page.getByTestId("dialog-command")).toHaveText(command);
   await page.getByTestId("dialog-confirm").click();
@@ -55,8 +65,15 @@ test("assets load under the CSP, the token leaves the address bar", async ({ pag
   expect(ctx.cspErrors).toEqual([]);
 });
 
-const rowCases: [string, string, string, unknown, string?][] = [
-  ["reverify-200", "reverify", "scripts/reverify --wait 200", { kind: "reverify", pr: 200 }],
+const rowCases: [string, string, string, unknown, string?, string?][] = [
+  [
+    "reverify-200",
+    "reverify",
+    "scripts/reverify --wait 200",
+    { kind: "reverify", pr: 200 },
+    undefined,
+    "Merges main and updated constituent branches into the train, pushes, and starts a verify run.",
+  ],
   ["reverify_cancel-200", "cancel+reverify", "scripts/reverify --cancel 200", { kind: "reverify_cancel", pr: 200 }],
   ["merge-200", "merge", "gh pr merge 200 --merge", { kind: "merge", pr: 200 }],
   ["label-101", "add label", "gh pr edit 101 --add-label needs-maintainer", { kind: "label", pr: 101, add: true }],
@@ -71,10 +88,10 @@ const rowCases: [string, string, string, unknown, string?][] = [
   ],
 ];
 
-for (const [id, what, command, body, fill] of rowCases) {
+for (const [id, what, command, body, fill, message] of rowCases) {
   test(`row action: ${what}`, async ({ page }) => {
     const ctx = await open(page);
-    await confirmFlow(page, ctx, () => page.getByTestId(id).click(), command, body, fill);
+    await confirmFlow(page, ctx, () => page.getByTestId(id).click(), command, body, fill, message);
   });
 }
 

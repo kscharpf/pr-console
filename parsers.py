@@ -184,18 +184,13 @@ _MERGE_RE = re.compile(r"^Merge pull request #(\d+) from ", re.M)
 def train_constituents(
     title: str = "", body: str | None = "", commit_messages: Iterable[str] = (), title_prefix: str = ""
 ) -> list[int]:
-    """Constituent PRs of a train, in order: the body's `- #<n>` lines, else the merge
-    commits, else the `#<n>` after the first comma of a title that starts with `title_prefix`."""
+    """Distinct constituent PRs of a train, in order: body bullets first, then merge commits, then title."""
     nums = [int(x) for x in _BODY_RE.findall(body or "")]
-    if nums:
-        return nums
-    for msg in commit_messages:
-        nums += [int(x) for x in _MERGE_RE.findall(msg)]
-    if nums:
-        return nums
-    if title_prefix and title.startswith(title_prefix) and "," in title:
-        return [int(x) for x in re.findall(r"#(\d+)", title.split(",", 1)[1])]
-    return []
+    if not nums:
+        nums = [int(x) for msg in commit_messages for x in _MERGE_RE.findall(msg)]
+    if not nums and title_prefix and title.startswith(title_prefix) and "," in title:
+        nums = [int(x) for x in re.findall(r"#(\d+)", title.split(",", 1)[1])]
+    return list(dict.fromkeys(nums))
 
 
 def review_state(reviews: list[GhReview] | None, comments: list[GhComment] | None) -> ReviewState:

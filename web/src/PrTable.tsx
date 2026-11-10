@@ -199,7 +199,13 @@ function Actions({ p }: { p: PrRow }) {
               variant="light"
               data-testid={`reverify-${n}`}
               onClick={() =>
-                void ask({ kind: "reverify", pr: n }, `Reverify train #${n}`, "Merges main into the train, pushes, and starts a verify run.", "Reverify", false)
+                void ask(
+                  { kind: "reverify", pr: n },
+                  `Reverify train #${n}`,
+                  "Merges main and updated constituent branches into the train, pushes, and starts a verify run.",
+                  "Reverify",
+                  false,
+                )
               }
             >
               reverify

@@ -78,16 +78,21 @@ class Worktrees(unittest.TestCase):
 
 class Trains(unittest.TestCase):
     def test_body(self) -> None:
-        body = "## Summary\n\nMerge train...\n\n- #351 [a](u)\n- #349 [b](u)\n\n## Evidence\n- #1 no"
-        self.assertEqual(P.train_constituents(body=body)[:2], [351, 349])
+        body = "## Summary\n\nMerge train...\n\n- #351 [a](u)\n- #349 [b](u)\n- #351 [a](u)\n\n## Evidence\n- #1 no"
+        self.assertEqual(P.train_constituents(body=body), [351, 349, 1])
 
     def test_commits(self) -> None:
-        msgs = ["Merge pull request #357 from example/a2/x\n\ndocs(a2): y", "fix", "Merge pull request #12 from o/b"]
+        msgs = [
+            "Merge pull request #357 from example/a2/x\n\ndocs(a2): y",
+            "fix",
+            "Merge pull request #12 from o/b",
+            "Merge pull request #357 from example/a2/x\n\ndocs(a2): y",
+        ]
         self.assertEqual(P.train_constituents(commit_messages=msgs), [357, 12])
 
     def test_title(self) -> None:
         self.assertEqual(
-            P.train_constituents(title="chore(train): 2026-11-08-3, #357, #356", title_prefix="chore(train):"),
+            P.train_constituents(title="chore(train): 2026-11-08-3, #357, #356, #357", title_prefix="chore(train):"),
             [357, 356],
         )
         self.assertEqual(P.train_constituents(title="feat: #3", title_prefix="chore(train):"), [])
