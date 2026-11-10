@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode } from "react";
+import { Fragment, memo, type ReactNode } from "react";
 
 // A small markdown renderer that builds React elements only: raw HTML in the text stays text,
 // because nothing here sets innerHTML. Links are kept only for http(s) and mailto URLs.
@@ -40,7 +40,7 @@ function withBreaks(lines: string[], key: string): ReactNode[] {
   return lines.flatMap((l, i) => (i === 0 ? inline(l, `${key}-${i}`) : [<br key={`${key}-br${i}`} />, ...inline(l, `${key}-${i}`)]));
 }
 
-export function Markdown({ text }: { text: string }) {
+export const Markdown = memo(function Markdown({ text }: { text: string }) {
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
   const blocks: ReactNode[] = [];
   let i = 0;
@@ -97,4 +97,4 @@ export function Markdown({ text }: { text: string }) {
     blocks.push(<p key={k}>{withBreaks(para, k)}</p>);
   }
   return <div className="md">{blocks}</div>;
-}
+});

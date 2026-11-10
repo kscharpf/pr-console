@@ -1,5 +1,5 @@
 import { Alert, Anchor, Badge, Button, Card, Code, Group, NativeSelect, Stack, Text, Textarea, TextInput, Title, Tooltip } from "@mantine/core";
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "./api";
 import { useChats, type ChatState } from "./chatStore";
 import { useConfig } from "./config";
@@ -216,13 +216,288 @@ function Launch({ onDone }: { onDone: (id: string) => void }) {
   );
 }
 
+function Stamp({ t }: { t: number }) {
+  if (!t) return <span className="stamp" />;
+  const d = new Date(t * 1000);
+  return (
+    <span className="stamp" title={d.toLocaleString()} data-testid="msg-time">
+      {d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+    </span>
+  );
+}
+
+const ago = (secs: number) => {
+  const v = Math.max(0, Math.floor(secs));
+  return v < 60 ? `${v}s` : v < 3600 ? `${Math.floor(v / 60)}m ${v % 60}s` : `${Math.floor(v / 3600)}h ${Math.floor((v % 3600) / 60)}m`;
+};
+
+/** While a turn runs: how long it has been working and how long since the last output. */
+function Activity({ s, status, lastActivity }: { s: ChatState; status: ChatStatus; lastActivity: number }) {
+  const [now, setNow] = useState(() => Date.now() / 1000);
+  useEffect(() => {
+    const h = setInterval(() => setNow(Date.now() / 1000), 1000);
+    return () => clearInterval(h);
+  }, []);
+  if (status !== "running" && status !== "starting" && status !== "permission") return null;
+  let turnStart = 0;
+  for (const e of s.events) if (e.kind === "user") turnStart = e.t;
+  const quiet = now - lastActivity;
+  return (
+    <Text size="xs" c={quiet > 120 ? "orange" : "dimmed"} data-testid="chat-activity">
+      {status === "permission" ? "waiting for your permission" : "working"}
+      {turnStart ? ` for ${ago(now - turnStart)}` : ""} · last output {ago(quiet)} ago
+    </Text>
+  );
+}
+
+const EventList = memo(function EventList({ events }: { events: ChatEvent[] }) {
+  const results = new Map<string, Extract<ChatEvent, { kind: "tool_result" }>>();
+  const decided = new Map<string, boolean>();
+  for (const e of events) {
+    if (e.kind === "tool_result") results.set(e.tool_use_id, e);
+    if (e.kind === "permission_decided") decided.set(e.req_id, e.allow);
+  }
+  const out: ReactNode[] = [];
+  // Every message carries the time it arrived, so a quiet session reads as quiet, not hung.
+  const push = (e: ChatEvent, node: ReactNode) =>
+    out.push(
+      <div key={`row-${e.id}`} className="msg-row">
+        <Stamp t={e.t} />
+        <div className="msg-cell">{node}</div>
+      </div>,
+    );
+  for (const e of events) {
+    const k = String(e.id);
+    switch (e.kind) {
+      case "user":
+        push(
+          e,
+          <div key={k} className="msg msg-user" data-testid="msg-user">
+            <Markdown text={e.text} />
+          </div>,
+        );
+        break;
+      case "text":
+        push(
+          e,
+          <div key={k} className={e.sub ? "msg msg-assistant msg-sub" : "msg msg-assistant"} data-testid="msg-assistant">
+            <Markdown text={e.text} />
+          </div>,
+        );
+        break;
+      case "tool_use": {
+        const res = results.get(e.tool_use_id);
+        push(
+          e,
+          <div key={k} className="msg msg-tool" data-testid="msg-tool">
+            <Text size="sm">
+              <Code>{e.name}</Code>{" "}
+              {res === undefined ? (
+                <Badge size="xs" color="gray" variant="light">
+                  pending
+                </Badge>
+              ) : res.is_error ? (
+                <Badge size="xs" color="red" variant="light">
+                  error
+                </Badge>
+              ) : (
+                <Badge size="xs" color="green" variant="light">
+                  done
+                </Badge>
+              )}
+            </Text>
+            <Code block className="tool-input">
+              {JSON.stringify(e.input, null, 2)}
+            </Code>
+            {res !== undefined && (
+              <details data-testid="tool-result">
+                <summary>result</summary>
+                <Code block>{res.content || "(empty)"}</Code>
+              </details>
+            )}
+          </div>,
+        );
+        break;
+      }
+      case "permission": {
+        const d = decided.get(e.req_id);
+        push(
+          e,
+          <Text key={k} size="xs" c={d === undefined ? "orange" : d ? "green" : "red"} data-testid="msg-permission">
+            permission for {e.tool}: {d === undefined ? "waiting" : d ? "allowed" : "denied"}
+          </Text>,
+        );
+        break;
+      }
+      case "hook":
+        push(
+          e,
+          <Alert key={k} color="orange" title={`hook ${e.name || e.event}: ${e.outcome ?? ""}${e.exit_code !== null ? ` (exit ${e.exit_code})` : ""}`} data-testid="msg-hook">
+            <pre className="pre-wrap">{e.output}</pre>
+          </Alert>,
+        );
+        break;
+      case "error":
+        push(
+          e,
+          <Alert key={k} color="red" title="error" data-testid="msg-error">
+            <pre className="pre-wrap">{e.message}</pre>
+          </Alert>,
+        );
+        break;
+      case "result":
+        push(
+          e,
+          <Text key={k} size="xs" c={e.is_error ? "red" : "dimmed"} data-testid="msg-result">
+            {e.terminal_reason?.startsWith("aborted") ? "interrupted" : e.is_error ? `turn failed: ${e.text ?? e.subtype}` : "turn done"}
+            {e.cost !== null ? ` · $${e.cost.toFixed(4)}` : ""} · {(e.duration_ms / 1000).toFixed(1)} s
+            {e.errors.length > 0 ? ` · ${e.errors.join("; ")}` : ""}
+          </Text>,
+        );
+        break;
+      case "info":
+      case "system":
+        push(
+          e,
+          <Text key={k} size="xs" c="dimmed">
+            {e.text}
+          </Text>,
+        );
+        break;
+      case "status":
+      case "delta":
+      case "permission_decided":
+      case "tool_result":
+        break;
+    }
+  }
+  return <>{out}</>;
+});
+
+const Draft = memo(function Draft({ draft }: { draft: string }) {
+  if (!draft) return null;
+  return (
+    <div key="draft" className="msg msg-assistant msg-draft" data-testid="msg-draft">
+      <Markdown text={draft} />
+    </div>
+  );
+});
+
+const Transcript = memo(function Transcript({ events, draft }: { events: ChatEvent[]; draft: string }) {
+  return (
+    <>
+      <EventList events={events} />
+      <Draft draft={draft} />
+    </>
+  );
+});
+
+interface ComposerProps {
+  id: string;
+  title: string;
+  connected: boolean;
+  status: ChatStatus;
+  select: (id: string | null) => void;
+  reload: () => Promise<void>;
+  forget: (id: string) => void;
+  onError: (err: string | null) => void;
+}
+
+const Composer = memo(function Composer({ id, title, connected, status, select, reload, forget, onError }: ComposerProps) {
+  const { confirm } = useDialogs();
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const act = async (f: () => Promise<unknown>, clear = false) => {
+    setBusy(true);
+    try {
+      await f();
+      onError(null);
+      if (clear) setText("");
+    } catch (e) {
+      onError(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    const ok = await confirm({
+      title: `Delete chat "${title}"?`,
+      message: "This removes the chat and the console's event log for it (chats/registry.json entry and chats/<id>.jsonl). Claude Code's own saved session is not touched. It cannot be undone.",
+      command: `POST /api/chats/${id}/delete`,
+      commandLabel: "Sends to the console:",
+      confirmLabel: "Delete chat",
+      danger: true,
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      await api.deleteChat(id);
+      select(null);
+      forget(id);
+      await reload();
+    } catch (e) {
+      onError(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const running = status === "running" || status === "permission" || status === "starting";
+
+  return (
+    <>
+      <Textarea
+        placeholder={connected ? "Message" : "Message (resumes the session)"}
+        value={text}
+        onChange={(e) => setText(e.currentTarget.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && text.trim() && !busy) void act(() => api.send(id, text), true);
+        }}
+        autosize
+        minRows={2}
+        maxLength={MAX_PROMPT}
+        data-testid="chat-input"
+      />
+      <Group justify="space-between">
+        <Text size="xs" c="dimmed">
+          ⌘/Ctrl+Enter sends
+        </Text>
+        <Group gap="xs">
+          {!connected && (
+            <Button variant="default" size="xs" onClick={() => void act(() => api.resume(id))} disabled={busy} data-testid="chat-resume">
+              Resume
+            </Button>
+          )}
+          {connected && (
+            <Button variant="default" size="xs" onClick={() => void act(() => api.end(id))} disabled={busy} data-testid="chat-end">
+              End session
+            </Button>
+          )}
+          <Tooltip label="End the session first" disabled={!connected}>
+            <span>
+              <Button color="red" variant="light" size="xs" onClick={() => void remove()} disabled={connected || busy} data-testid="chat-delete">
+                Delete
+              </Button>
+            </span>
+          </Tooltip>
+          <Button color="orange" variant="light" size="xs" onClick={() => void act(() => api.interrupt(id))} disabled={!running || busy} data-testid="chat-interrupt">
+            Interrupt
+          </Button>
+          <Button size="xs" onClick={() => void act(() => api.send(id, text), true)} disabled={!text.trim() || busy} data-testid="chat-send">
+            Send
+          </Button>
+        </Group>
+      </Group>
+    </>
+  );
+});
+
 function ChatPane({ r, onOpenPr }: { r: ChatRow; onOpenPr: (n: number) => void }) {
   const { state, select, reload, forget } = useChats();
-  const { confirm } = useDialogs();
   const s = state(r.id);
-  const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   const card = useRef<HTMLDivElement>(null);
   // Fit the pane between where it starts and the top of the fixed log panel, measured rather
@@ -263,43 +538,6 @@ function ChatPane({ r, onOpenPr }: { r: ChatRow; onOpenPr: (n: number) => void }
     lastTop.current = el.scrollTop;
   }, [r.id, s.events.length, s.draft, height]);
 
-  const act = async (f: () => Promise<unknown>, clear = false) => {
-    setBusy(true);
-    try {
-      await f();
-      setError(null);
-      if (clear) setText("");
-    } catch (e) {
-      setError(errText(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const remove = async () => {
-    const ok = await confirm({
-      title: `Delete chat "${r.title}"?`,
-      message: "This removes the chat and the console's event log for it (chats/registry.json entry and chats/<id>.jsonl). Claude Code's own saved session is not touched. It cannot be undone.",
-      command: `POST /api/chats/${r.id}/delete`,
-      commandLabel: "Sends to the console:",
-      confirmLabel: "Delete chat",
-      danger: true,
-    });
-    if (!ok) return;
-    setBusy(true);
-    try {
-      await api.deleteChat(r.id);
-      select(null);
-      forget(r.id);
-      await reload();
-    } catch (e) {
-      setError(errText(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const running = r.status === "running" || r.status === "permission" || r.status === "starting";
   return (
     <Card withBorder data-testid="chat-pane" className="chat-pane-card" ref={card} h={height ?? undefined}>
       <Stack gap="xs" className="chat-pane-stack">
@@ -330,7 +568,7 @@ function ChatPane({ r, onOpenPr }: { r: ChatRow; onOpenPr: (n: number) => void }
             SCROLL.set(r.id, { top: el.scrollTop, stick: stick.current });
           }}
         >
-          <Transcript s={s} />
+          <Transcript events={s.events} draft={s.draft} />
         </div>
         {error && (
           <Alert color="red" data-testid="chat-error">
@@ -338,205 +576,17 @@ function ChatPane({ r, onOpenPr }: { r: ChatRow; onOpenPr: (n: number) => void }
           </Alert>
         )}
         <Activity s={s} status={r.status} lastActivity={r.last_activity} />
-        <Textarea
-          placeholder={r.connected ? "Message" : "Message (resumes the session)"}
-          value={text}
-          onChange={(e) => setText(e.currentTarget.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && text.trim()) void act(() => api.send(r.id, text), true);
-          }}
-          autosize
-          minRows={2}
-          maxLength={MAX_PROMPT}
-          data-testid="chat-input"
+        <Composer
+          id={r.id}
+          title={r.title}
+          connected={r.connected}
+          status={r.status}
+          select={select}
+          reload={reload}
+          forget={forget}
+          onError={setError}
         />
-        <Group justify="space-between">
-          <Text size="xs" c="dimmed">
-            ⌘/Ctrl+Enter sends
-          </Text>
-          <Group gap="xs">
-            {!r.connected && (
-              <Button variant="default" size="xs" onClick={() => void act(() => api.resume(r.id))} disabled={busy} data-testid="chat-resume">
-                Resume
-              </Button>
-            )}
-            {r.connected && (
-              <Button variant="default" size="xs" onClick={() => void act(() => api.end(r.id))} disabled={busy} data-testid="chat-end">
-                End session
-              </Button>
-            )}
-            <Tooltip label="End the session first" disabled={!r.connected}>
-              <span>
-                <Button color="red" variant="light" size="xs" onClick={() => void remove()} disabled={r.connected || busy} data-testid="chat-delete">
-                  Delete
-                </Button>
-              </span>
-            </Tooltip>
-            <Button color="orange" variant="light" size="xs" onClick={() => void act(() => api.interrupt(r.id))} disabled={!running || busy} data-testid="chat-interrupt">
-              Interrupt
-            </Button>
-            <Button size="xs" onClick={() => void act(() => api.send(r.id, text), true)} disabled={!text.trim() || busy} data-testid="chat-send">
-              Send
-            </Button>
-          </Group>
-        </Group>
       </Stack>
     </Card>
   );
-}
-
-function Stamp({ t }: { t: number }) {
-  if (!t) return <span className="stamp" />;
-  const d = new Date(t * 1000);
-  return (
-    <span className="stamp" title={d.toLocaleString()} data-testid="msg-time">
-      {d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-    </span>
-  );
-}
-
-const ago = (secs: number) => {
-  const v = Math.max(0, Math.floor(secs));
-  return v < 60 ? `${v}s` : v < 3600 ? `${Math.floor(v / 60)}m ${v % 60}s` : `${Math.floor(v / 3600)}h ${Math.floor((v % 3600) / 60)}m`;
-};
-
-/** While a turn runs: how long it has been working and how long since the last output. */
-function Activity({ s, status, lastActivity }: { s: ChatState; status: ChatStatus; lastActivity: number }) {
-  const [now, setNow] = useState(() => Date.now() / 1000);
-  useEffect(() => {
-    const h = setInterval(() => setNow(Date.now() / 1000), 1000);
-    return () => clearInterval(h);
-  }, []);
-  if (status !== "running" && status !== "starting" && status !== "permission") return null;
-  let turnStart = 0;
-  for (const e of s.events) if (e.kind === "user") turnStart = e.t;
-  const quiet = now - lastActivity;
-  return (
-    <Text size="xs" c={quiet > 120 ? "orange" : "dimmed"} data-testid="chat-activity">
-      {status === "permission" ? "waiting for your permission" : "working"}
-      {turnStart ? ` for ${ago(now - turnStart)}` : ""} · last output {ago(quiet)} ago
-    </Text>
-  );
-}
-
-function Transcript({ s }: { s: ChatState }) {
-  const results = new Map<string, Extract<ChatEvent, { kind: "tool_result" }>>();
-  const decided = new Map<string, boolean>();
-  for (const e of s.events) {
-    if (e.kind === "tool_result") results.set(e.tool_use_id, e);
-    if (e.kind === "permission_decided") decided.set(e.req_id, e.allow);
-  }
-  const out: ReactNode[] = [];
-  // Every message carries the time it arrived, so a quiet session reads as quiet, not hung.
-  const push = (e: ChatEvent, node: ReactNode) =>
-    out.push(
-      <div key={`row-${e.id}`} className="msg-row">
-        <Stamp t={e.t} />
-        <div className="msg-cell">{node}</div>
-      </div>,
-    );
-  for (const e of s.events) {
-    const k = String(e.id);
-    switch (e.kind) {
-      case "user":
-        push(e, 
-          <div key={k} className="msg msg-user" data-testid="msg-user">
-            <Markdown text={e.text} />
-          </div>,
-        );
-        break;
-      case "text":
-        push(e, 
-          <div key={k} className={e.sub ? "msg msg-assistant msg-sub" : "msg msg-assistant"} data-testid="msg-assistant">
-            <Markdown text={e.text} />
-          </div>,
-        );
-        break;
-      case "tool_use": {
-        const res = results.get(e.tool_use_id);
-        push(e, 
-          <div key={k} className="msg msg-tool" data-testid="msg-tool">
-            <Text size="sm">
-              <Code>{e.name}</Code>{" "}
-              {res === undefined ? (
-                <Badge size="xs" color="gray" variant="light">
-                  pending
-                </Badge>
-              ) : res.is_error ? (
-                <Badge size="xs" color="red" variant="light">
-                  error
-                </Badge>
-              ) : (
-                <Badge size="xs" color="green" variant="light">
-                  done
-                </Badge>
-              )}
-            </Text>
-            <Code block className="tool-input">
-              {JSON.stringify(e.input, null, 2)}
-            </Code>
-            {res !== undefined && (
-              <details data-testid="tool-result">
-                <summary>result</summary>
-                <Code block>{res.content || "(empty)"}</Code>
-              </details>
-            )}
-          </div>,
-        );
-        break;
-      }
-      case "permission": {
-        const d = decided.get(e.req_id);
-        push(e, 
-          <Text key={k} size="xs" c={d === undefined ? "orange" : d ? "green" : "red"} data-testid="msg-permission">
-            permission for {e.tool}: {d === undefined ? "waiting" : d ? "allowed" : "denied"}
-          </Text>,
-        );
-        break;
-      }
-      case "hook":
-        push(e, 
-          <Alert key={k} color="orange" title={`hook ${e.name || e.event}: ${e.outcome ?? ""}${e.exit_code !== null ? ` (exit ${e.exit_code})` : ""}`} data-testid="msg-hook">
-            <pre className="pre-wrap">{e.output}</pre>
-          </Alert>,
-        );
-        break;
-      case "error":
-        push(e, 
-          <Alert key={k} color="red" title="error" data-testid="msg-error">
-            <pre className="pre-wrap">{e.message}</pre>
-          </Alert>,
-        );
-        break;
-      case "result":
-        push(e, 
-          <Text key={k} size="xs" c={e.is_error ? "red" : "dimmed"} data-testid="msg-result">
-            {e.terminal_reason?.startsWith("aborted") ? "interrupted" : e.is_error ? `turn failed: ${e.text ?? e.subtype}` : "turn done"}
-            {e.cost !== null ? ` · $${e.cost.toFixed(4)}` : ""} · {(e.duration_ms / 1000).toFixed(1)} s
-            {e.errors.length > 0 ? ` · ${e.errors.join("; ")}` : ""}
-          </Text>,
-        );
-        break;
-      case "info":
-      case "system":
-        push(e, 
-          <Text key={k} size="xs" c="dimmed">
-            {e.text}
-          </Text>,
-        );
-        break;
-      case "status":
-      case "delta":
-      case "permission_decided":
-      case "tool_result":
-        break;
-    }
-  }
-  if (s.draft)
-    out.push(
-      <div key="draft" className="msg msg-assistant msg-draft" data-testid="msg-draft">
-        <Markdown text={s.draft} />
-      </div>,
-    );
-  return <>{out}</>;
 }

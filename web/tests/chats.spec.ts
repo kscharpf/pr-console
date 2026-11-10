@@ -62,6 +62,12 @@ test("launch streams the reply; a follow-up continues; no CSP errors", async ({ 
   await expect(pane(page).getByTestId("msg-assistant").last()).toHaveText("echo: second question");
   await expect(pane(page).getByTestId("msg-assistant")).toHaveCount(2);
   await expect(page.getByTestId("chat-input")).toHaveValue("");
+
+  await page.getByTestId("chat-input").fill("third question");
+  await page.keyboard.press("ControlOrMeta+Enter");
+  await expect(pane(page).getByTestId("msg-assistant").last()).toHaveText("echo: third question");
+  await expect(pane(page).getByTestId("msg-assistant")).toHaveCount(3);
+  await expect(page.getByTestId("chat-input")).toHaveValue("");
   expect(ctx.errors).toEqual([]);
 });
 
