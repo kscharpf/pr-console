@@ -24,14 +24,112 @@ const STATUS: Record<ChatStatus, [string, string]> = {
 const when = (t: number) => (t ? new Date(t * 1000).toLocaleString() : "");
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
+let savedListWidth: number | null = null;
+
 export function Chats({ onOpenPr }: { onOpenPr: (n: number) => void }) {
   const { rows, error, selected, select } = useChats();
   const [launching, setLaunching] = useState(false);
   const cur = rows.find((r) => r.id === selected) ?? null;
+  const [listWidth, setListWidth] = useState<number | null>(() => savedListWidth);
+  const [isDragging, setIsDragging] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const cleanupRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    return () => {
+      cleanupRef.current?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    const onResize = () => {
+      setListWidth((w) => {
+        if (w === null) return null;
+        const container = containerRef.current;
+        if (!container) return w;
+        const maxW = Math.max(200, Math.min(container.getBoundingClientRect().width - 320, container.getBoundingClientRect().width * 0.7));
+        const next = Math.min(w, maxW);
+        savedListWidth = next;
+        return next;
+      });
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  const onSplitterPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const container = containerRef.current;
+    if (!container) return;
+
+    cleanupRef.current?.();
+    setIsDragging(true);
+
+    const containerRect = container.getBoundingClientRect();
+    const minWidth = 200;
+    const maxWidth = Math.max(minWidth, Math.min(containerRect.width - 320, containerRect.width * 0.7));
+
+    const onPointerMove = (ev: PointerEvent) => {
+      const raw = ev.clientX - containerRect.left;
+      const clamped = Math.max(minWidth, Math.min(maxWidth, Math.round(raw)));
+      setListWidth(clamped);
+      savedListWidth = clamped;
+    };
+
+    const cleanup = () => {
+      setIsDragging(false);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", cleanup);
+      window.removeEventListener("pointercancel", cleanup);
+      document.body.style.removeProperty("user-select");
+      document.body.style.removeProperty("cursor");
+      cleanupRef.current = null;
+    };
+
+    cleanupRef.current = cleanup;
+    document.body.style.setProperty("user-select", "none");
+    document.body.style.setProperty("cursor", "col-resize");
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", cleanup);
+    window.addEventListener("pointercancel", cleanup);
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const container = containerRef.current;
+    const currentWidth = listWidth ?? (container ? Math.round(container.getBoundingClientRect().width * 0.34) : 340);
+    const minWidth = 200;
+    const maxWidth = container
+      ? Math.max(minWidth, Math.min(container.getBoundingClientRect().width - 320, container.getBoundingClientRect().width * 0.7))
+      : 600;
+    const step = e.shiftKey ? 32 : 16;
+
+    if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      const next = Math.max(minWidth, Math.min(maxWidth, currentWidth - step));
+      setListWidth(next);
+      savedListWidth = next;
+    } else if (e.key === "ArrowRight") {
+      e.preventDefault();
+      const next = Math.max(minWidth, Math.min(maxWidth, currentWidth + step));
+      setListWidth(next);
+      savedListWidth = next;
+    } else if (e.key === "Home" || e.key === "Enter") {
+      e.preventDefault();
+      setListWidth(null);
+      savedListWidth = null;
+    }
+  };
 
   return (
-    <div className="chats" data-testid="chats">
-      <div className="chats-list">
+    <div className="chats" data-testid="chats" ref={containerRef}>
+      <div
+        className="chats-list"
+        style={{
+          width: listWidth !== null ? `${listWidth}px` : undefined,
+          flex: listWidth !== null ? `0 0 ${listWidth}px` : undefined,
+        }}
+      >
         <Stack gap="sm">
           <Group>
             <Button size="xs" onClick={() => setLaunching((l) => !l)} data-testid="chat-new">
@@ -56,6 +154,23 @@ export function Chats({ onOpenPr }: { onOpenPr: (n: number) => void }) {
             <ChatCard key={r.id} r={r} active={r.id === selected} onClick={() => select(r.id)} onOpenPr={onOpenPr} />
           ))}
         </Stack>
+      </div>
+      <div
+        className={`chats-splitter${isDragging ? " chats-splitter-active" : ""}`}
+        data-testid="chats-splitter"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize chat list"
+        aria-valuenow={listWidth ?? undefined}
+        tabIndex={0}
+        onPointerDown={onSplitterPointerDown}
+        onKeyDown={onKeyDown}
+        onDoubleClick={() => {
+          setListWidth(null);
+          savedListWidth = null;
+        }}
+      >
+        <div className="chats-splitter-bar" />
       </div>
       <div className="chats-pane">
         {cur ? (
@@ -457,6 +572,7 @@ const Composer = memo(function Composer({ id, title, connected, status, select, 
         }}
         autosize
         minRows={2}
+        maxRows={10}
         maxLength={MAX_PROMPT}
         data-testid="chat-input"
       />

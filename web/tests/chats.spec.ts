@@ -394,3 +394,85 @@ test("switching tabs and back keeps the chat's place: the bottom when following,
   await expect.poll(() => t().evaluate((el) => Math.round(el.scrollTop))).toBe(300); // reading: same place
   expect(ctx.errors).toEqual([]);
 });
+
+test("resizable handles adjust chat list, chat pane, and log panel without CSP errors", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  const ctx = await open(page);
+  await launch(page, "resize test");
+  await expect(pane(page).getByTestId("msg-assistant").last()).toHaveText("echo: resize test");
+  await expect(status(page)).toHaveText("waiting for you");
+
+  const chatsSplitter = page.getByTestId("chats-splitter");
+  const logSplitter = page.getByTestId("log-splitter");
+  await expect(chatsSplitter).toBeVisible();
+  await expect(logSplitter).toBeVisible();
+
+  // 1. Horizontal resize between chat list and chat pane
+  const list = page.locator(".chats-list");
+  const initialListWidth = (await list.boundingBox())!.width;
+  const initialPaneWidth = (await pane(page).boundingBox())!.width;
+
+  // Drag splitter left to narrow the list and widen the transcript pane
+  await page.evaluate(() => window.scrollTo(0, 0));
+  const splitBox = (await chatsSplitter.boundingBox())!;
+  const startX = splitBox.x + splitBox.width / 2;
+  const startY = splitBox.y + 80;
+  await page.mouse.move(startX, startY);
+  await page.mouse.down();
+  await page.mouse.move(startX - 100, startY, { steps: 5 });
+  await page.mouse.up();
+
+  await expect.poll(async () => (await list.boundingBox())!.width).toBeLessThan(initialListWidth - 70);
+  await expect.poll(async () => (await pane(page).boundingBox())!.width).toBeGreaterThan(initialPaneWidth + 70);
+
+  // Double-click resets chat list to default width
+  await chatsSplitter.dispatchEvent("dblclick");
+  await expect.poll(async () => Math.round((await list.boundingBox())!.width)).toBe(Math.round(initialListWidth));
+
+  // Keyboard navigation on chat list splitter
+  await chatsSplitter.focus();
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("ArrowLeft");
+  await expect.poll(async () => (await list.boundingBox())!.width).toBeLessThan(initialListWidth - 20);
+
+  // 2. Vertical resize of log panel
+  const log = page.locator(".log");
+  const initialLogHeight = (await log.boundingBox())!.height;
+  const initialPaneHeight = (await pane(page).boundingBox())!.height;
+
+  // Drag log splitter down to shrink the log and expand the transcript pane
+  const logSplitBox = (await logSplitter.boundingBox())!;
+  const logX = logSplitBox.x + logSplitBox.width / 2;
+  const logY = logSplitBox.y + logSplitBox.height / 2;
+  await page.mouse.move(logX, logY);
+  await page.mouse.down();
+  await page.mouse.move(logX, logY + 60, { steps: 5 });
+  await page.mouse.up();
+
+  await expect.poll(async () => (await log.boundingBox())!.height).toBeLessThan(initialLogHeight - 40);
+  await expect.poll(async () => (await pane(page).boundingBox())!.height).toBeGreaterThan(initialPaneHeight + 40);
+
+  // Drag log splitter up to grow the log and shrink the transcript pane
+  const logSplitBox2 = (await logSplitter.boundingBox())!;
+  const logX2 = logSplitBox2.x + logSplitBox2.width / 2;
+  const logY2 = logSplitBox2.y + logSplitBox2.height / 2;
+  await page.mouse.move(logX2, logY2);
+  await page.mouse.down();
+  await page.mouse.move(logX2, logY2 - 100, { steps: 5 });
+  await page.mouse.up();
+
+  await expect.poll(async () => (await log.boundingBox())!.height).toBeGreaterThan(initialLogHeight);
+
+  // Double-click resets log to default height
+  await logSplitter.dispatchEvent("dblclick");
+  await expect.poll(async () => Math.round((await log.boundingBox())!.height)).toBe(Math.round(initialLogHeight));
+
+  // Keyboard navigation on log splitter
+  await logSplitter.focus();
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await expect.poll(async () => (await log.boundingBox())!.height).toBeLessThan(initialLogHeight - 20);
+
+  // Verify zero CSP or console errors throughout all resize interactions
+  expect(ctx.errors).toEqual([]);
+});

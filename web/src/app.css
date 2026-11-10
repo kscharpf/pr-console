@@ -14,7 +14,7 @@ body {
   padding: 0 16px;
 }
 .main {
-  padding: 16px 16px 40vh;
+  padding: 16px 16px max(40vh, calc(var(--log-height, 28vh) + 32px));
 }
 .log {
   position: fixed;
@@ -29,6 +29,36 @@ body {
 }
 .log.log-collapsed {
   height: auto;
+}
+.log-splitter {
+  position: absolute;
+  top: -4px;
+  left: 0;
+  right: 0;
+  height: 8px;
+  cursor: row-resize;
+  touch-action: none;
+  user-select: none;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.log-splitter:focus-visible {
+  outline: none;
+}
+.log-splitter-bar {
+  width: 48px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--mantine-color-default-border);
+  transition: background-color 0.15s ease, width 0.15s ease;
+}
+.log-splitter:hover .log-splitter-bar,
+.log-splitter:focus-visible .log-splitter-bar,
+.log-splitter-active .log-splitter-bar {
+  background: var(--mantine-color-blue-filled);
+  width: 72px;
 }
 .log-head {
   padding: 6px 16px;
@@ -124,12 +154,40 @@ body {
 .md code { font-family: var(--mantine-font-family-monospace); font-size: 0.9em; }
 .md blockquote { border-left: 3px solid var(--mantine-color-default-border); padding-left: 8px; }
 .pr-focus td { background: var(--mantine-color-yellow-light); }
-.chats { display: flex; gap: 16px; align-items: flex-start; }
+.chats { display: flex; gap: 0; align-items: stretch; }
 .chats-list { flex: 0 0 34%; min-width: 0; }
+.chats-splitter {
+  flex: 0 0 16px;
+  display: flex;
+  justify-content: center;
+  align-items: stretch;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+  padding: 0 6px;
+  position: relative;
+}
+.chats-splitter:focus-visible {
+  outline: none;
+}
+.chats-splitter-bar {
+  width: 2px;
+  height: 100%;
+  min-height: 120px;
+  background: var(--mantine-color-default-border);
+  border-radius: 2px;
+  transition: background-color 0.15s ease;
+}
+.chats-splitter:hover .chats-splitter-bar,
+.chats-splitter:focus-visible .chats-splitter-bar,
+.chats-splitter-active .chats-splitter-bar {
+  background: var(--mantine-color-blue-filled);
+}
 .chats-pane { flex: 1; min-width: 0; }
 @media (max-width: 900px) {
-  .chats { flex-direction: column; }
-  .chats-list { flex: none; width: 100%; }
+  .chats { flex-direction: column; gap: 16px; }
+  .chats-list { flex: none !important; width: 100% !important; }
+  .chats-splitter { display: none; }
 }
 .msg-row { display: flex; gap: 8px; align-items: flex-start; }
 .msg-row .stamp { flex: 0 0 auto; width: 64px; padding-top: 7px; font-size: 11px; color: var(--mantine-color-dimmed); font-variant-numeric: tabular-nums; }
