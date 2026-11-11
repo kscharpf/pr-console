@@ -47,12 +47,15 @@ test("launch streams the reply; a follow-up continues; no CSP errors", async ({ 
   const ctx = await open(page);
   await expect(page.getByTestId("chat-mode").locator("option")).toHaveCount(0); // form closed
   await page.getByTestId("chat-new").click();
-  // No mode that bypasses permissions is offered; auto is the default.
+  // opus is the default model; no mode that bypasses permissions is offered; auto is the default.
+  await expect(page.getByTestId("chat-model").locator("option")).toHaveText(["opus", "sonnet", "haiku", "CLI default"]);
+  await expect(page.getByTestId("chat-model")).toHaveValue("opus");
   await expect(page.getByTestId("chat-mode").locator("option")).toHaveText([/^auto/, /^default/, /^plan/]);
   await expect(page.getByTestId("chat-mode")).toHaveValue("auto");
   await page.getByTestId("chat-new").click();
 
   await launch(page, "hello there");
+  await expect(pane(page)).toContainText("opus · auto · id");
   await expect(pane(page).getByTestId("msg-assistant").last()).toHaveText("echo: hello there");
   await expect(status(page)).toHaveText("waiting for you");
   await expect(pane(page).getByTestId("msg-result")).toHaveCount(1);
@@ -336,8 +339,9 @@ test("a chat is always a coordinator in the main checkout", async ({ request }) 
     if (c.status !== "ended") await request.post(`/api/chats/${c.id}/end`, { headers: h, data: {} });
   const r = await request.post("/api/chats", { headers: h, data: { cwd: "/etc", prompt: "where am I" } });
   expect(r.status(), await r.text()).toBe(201);
-  const chat = (await r.json()) as { id: string; cwd: string };
+  const chat = (await r.json()) as { id: string; cwd: string; model: string };
   expect(chat.cwd).toBe(main);
+  expect(chat.model).toBe("opus");
   expect((await request.post(`/api/chats/${chat.id}/end`, { headers: h, data: {} })).ok()).toBe(true);
 });
 

@@ -50,6 +50,7 @@ class Validation(unittest.TestCase):
         for bad in ["bypassPermissions", "acceptEdits", "dontAsk", "DEFAULT"]:
             with self.assertRaises(C.ChatError):
                 C.validate_choice(bad, C.PERMISSION_MODES, "mode")
+        self.assertEqual(C.MODELS[0], "opus")
         self.assertEqual(C.validate_choice(None, C.MODELS, "model"), "")
 
     def test_cwd(self) -> None:

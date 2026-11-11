@@ -264,8 +264,8 @@ export function commandFor(cfg: RepoConfig, b: ActionBody): string {
 /** The permission modes the server accepts: both still ask before acting. */
 export const PERMISSION_MODES = ["auto", "default", "plan"] as const;
 export type PermissionMode = (typeof PERMISSION_MODES)[number];
-/** "" is the CLI's default model. */
-export const MODELS = ["", "opus", "sonnet", "haiku"] as const;
+/** opus is the coordinator default; "" is the CLI's default model. */
+export const MODELS = ["opus", "sonnet", "haiku", ""] as const;
 export type Model = (typeof MODELS)[number];
 
 export type ChatStatus = "starting" | "running" | "waiting" | "permission" | "idle" | "ended" | "error";

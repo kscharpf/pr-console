@@ -811,7 +811,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     return self._send(500, {"error": "no main checkout in git worktree list"})
                 cwd = C.validate_cwd(main, dirs)  # a coordinator works from the main checkout
                 prompt = C.validate_prompt(body.get("prompt"))
-                model = C.validate_choice(body.get("model"), C.MODELS, "model")
+                raw_model = "opus" if body.get("model") is None else body.get("model")
+                model = C.validate_choice(raw_model, C.MODELS, "model")
                 mode = C.validate_choice(body.get("permission_mode") or "auto", C.PERMISSION_MODES, "permission mode")
                 return self._send(201, CHATS.launch(cwd, prompt, model, mode))
             if path == "/api/chats/resume":

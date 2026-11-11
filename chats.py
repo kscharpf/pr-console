@@ -48,7 +48,7 @@ MAX_TOOL_TEXT = 20_000  # characters of a tool result kept
 BUFFER_COMPACT = 4000  # events in memory before superseded deltas are dropped
 # Modes that still ask before acting. Never "bypassPermissions", "acceptEdits", "auto" or "dontAsk".
 PERMISSION_MODES = ("auto", "default", "plan")  # auto first: the maintainer's terminal default
-MODELS = ("", "opus", "sonnet", "haiku")  # "" = the CLI's default
+MODELS = ("opus", "sonnet", "haiku", "")  # opus first: coordinator default; "" = the CLI's default
 STATUSES = ("starting", "running", "waiting", "permission", "idle", "ended", "error")
 
 
@@ -383,7 +383,7 @@ class ChatManager:
     def _live_count(self) -> int:
         return sum(1 for c in self.chats.values() if c.connected)
 
-    def launch(self, cwd: str, prompt: str, model: str = "", permission_mode: str = "auto") -> ChatPublic:
+    def launch(self, cwd: str, prompt: str, model: str = "opus", permission_mode: str = "auto") -> ChatPublic:
         with self.lock:
             if self._live_count() >= MAX_LIVE:
                 raise ChatError(f"{MAX_LIVE} sessions are connected; end one first")
