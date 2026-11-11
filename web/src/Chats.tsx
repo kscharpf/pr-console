@@ -14,7 +14,10 @@ const MAX_PROMPT = 16_000; // chats.MAX_PROMPT
 const STATUS: Record<ChatStatus, [string, string]> = {
   starting: ["starting", "gray"],
   running: ["running", "blue"],
-  waiting: ["waiting for you", "green"],
+  background: ["working in background", "cyan"],
+  waiting: ["turn ended", "green"],
+  needs_input: ["needs your input", "yellow"],
+  done: ["done: ready for PR", "grape"],
   permission: ["waiting for permission", "orange"],
   idle: ["idle", "teal"],
   ended: ["ended", "gray"],
@@ -183,12 +186,19 @@ export function Chats({ onOpenPr }: { onOpenPr: (n: number) => void }) {
   );
 }
 
-function StatusBadge({ s }: { s: ChatStatus }) {
+function StatusBadge({ s, note }: { s: ChatStatus; note: string }) {
   const [label, color] = STATUS[s];
-  return (
+  const badge = (
     <Badge color={color} variant="light" className="nowrap" data-testid="chat-status">
       {label}
     </Badge>
+  );
+  return note ? (
+    <Tooltip label={note} multiline maw={360}>
+      {badge}
+    </Tooltip>
+  ) : (
+    badge
   );
 }
 
@@ -218,7 +228,7 @@ function ChatCard({ r, active, onClick, onOpenPr }: { r: ChatRow; active: boolea
         <Text size="sm" fw={600} lineClamp={1} data-testid="chat-title">
           {r.title}
         </Text>
-        <StatusBadge s={r.status} />
+        <StatusBadge s={r.status} note={r.status_note} />
       </Group>
       <Group gap="xs" wrap="wrap">
         <Code>{shortPath(cfg, r.cwd)}</Code>
@@ -661,7 +671,7 @@ function ChatPane({ r, onOpenPr }: { r: ChatRow; onOpenPr: (n: number) => void }
           <Title order={5} lineClamp={1}>
             {r.title}
           </Title>
-          <StatusBadge s={r.status} />
+          <StatusBadge s={r.status} note={r.status_note} />
         </Group>
         <Group gap="xs">
           <Code>{r.cwd}</Code>

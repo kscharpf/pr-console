@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypedDict, TypeVar, cast
 if TYPE_CHECKING:  # the SDK is optional at run time (chats are off without it)
     from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
     from claude_agent_sdk.types import (
+        McpSdkServerConfig,
         PermissionMode,
         PermissionResultAllow,
         PermissionResultDeny,
@@ -49,7 +50,28 @@ BUFFER_COMPACT = 4000  # events in memory before superseded deltas are dropped
 # Modes that still ask before acting. Never "bypassPermissions", "acceptEdits", "auto" or "dontAsk".
 PERMISSION_MODES = ("auto", "default", "plan")  # auto first: the maintainer's terminal default
 MODELS = ("opus", "sonnet", "haiku", "")  # opus first: coordinator default; "" = the CLI's default
-STATUSES = ("starting", "running", "waiting", "permission", "idle", "ended", "error")
+STATUSES = (
+    "starting",
+    "running",
+    "background",
+    "waiting",
+    "needs_input",
+    "done",
+    "permission",
+    "idle",
+    "ended",
+    "error",
+)
+# What the agent may report through the console's set_chat_status tool when its turn ends.
+DECLARED = ("needs_input", "done")
+STATUS_TOOL = "mcp__console__set_chat_status"
+STATUS_PROMPT = (
+    "You run inside the PR console. Before you end a turn, call the set_chat_status tool once: "
+    "state 'needs_input' when you need the maintainer to answer or decide something, "
+    "or 'done' when the task is finished and ready for a PR. "
+    "Do not call it when you end the turn only to wait for a background task."
+)
+TERMINAL_TASK = frozenset({"completed", "failed", "stopped", "killed"})
 
 
 class ChatError(Exception):
@@ -99,6 +121,7 @@ class ChatPublic(TypedDict):
     permission_mode: str
     resume_id: str | None
     status: str
+    status_note: str
     connected: bool
     last_activity: float
     pending: list[PendingPermission]
@@ -287,6 +310,9 @@ class Chat:
         self.meta = meta
         self.buffer = buffer
         self.status = "ended"
+        self.status_note = ""  # the agent's summary with a declared status
+        self.declared: tuple[str, str] | None = None  # set_chat_status of the current turn
+        self.bg_tasks: set[str] = set()  # background tasks still running; loop thread only
         self.starting = False  # set under the manager lock by launch/resume until _start has made the task
         self.deleted = False
         # req_id -> (future, public payload); touched on the loop thread only
@@ -302,6 +328,8 @@ class Chat:
         return self.starting or (self.task is not None and not self.task.done())
 
     def set_status(self, s: str) -> None:
+        if s not in DECLARED:
+            self.status_note = ""
         if s != self.status:
             self.status = s
             self.emit("status", status=s)
@@ -315,6 +343,7 @@ class Chat:
         return {
             **self.meta,
             "status": self.status,
+            "status_note": self.status_note,
             "connected": self.connected,
             "last_activity": self.last_activity,
             "pending": list(self.pending_public),
@@ -569,15 +598,20 @@ class ChatManager:
             del stderr_tail[:-40]
 
         # Claude Code's own system prompt (None would send an empty one), plus the role.
-        system_prompt: SystemPromptPreset = {"type": "preset", "preset": "claude_code"}
-        if self.prompt_append:
-            system_prompt["append"] = self.prompt_append
+        system_prompt: SystemPromptPreset = {
+            "type": "preset",
+            "preset": "claude_code",
+            "append": "\n\n".join(x for x in (self.prompt_append, STATUS_PROMPT) if x),
+        }
         options = ClaudeAgentOptions(
             system_prompt=system_prompt,
             cwd=chat.meta["cwd"],
             permission_mode=permission_mode(chat.meta.get("permission_mode")),
             model=chat.meta.get("model") or None,
             can_use_tool=can_use_tool,
+            mcp_servers={"console": status_server(chat)},
+            # Only reports a status to the console; it reads and changes nothing.
+            allowed_tools=[STATUS_TOOL],
             include_partial_messages=True,
             include_hook_events=True,
             stderr=on_stderr,
@@ -600,6 +634,7 @@ class ChatManager:
                 kind, arg = get.result()
                 if kind == "query" and arg is not None:
                     chat.emit("user", text=arg)
+                    chat.declared = None
                     chat.set_status("running")
                     await client.query(arg)
                 elif kind == "interrupt":
@@ -630,6 +665,9 @@ class ChatManager:
             ResultMessage,
             StreamEvent,
             SystemMessage,
+            TaskNotificationMessage,
+            TaskStartedMessage,
+            TaskUpdatedMessage,
             TextBlock,
             ToolResultBlock,
             ToolUseBlock,
@@ -637,6 +675,10 @@ class ChatManager:
         )
 
         async for m in client.receive_messages():
+            if isinstance(m, StreamEvent | AssistantMessage) and chat.status in AT_REST:
+                # A turn the session began on its own, e.g. after a background task finished.
+                chat.declared = None
+                chat.set_status("running")
             if isinstance(m, StreamEvent):
                 ev = m.event or {}
                 d = ev.get("delta") or {}
@@ -679,7 +721,12 @@ class ChatManager:
                     text=m.result if m.is_error else None,
                 )
                 interrupted = (m.terminal_reason or "").startswith("aborted") or m.subtype == "error_during_execution"
-                chat.set_status("idle" if interrupted else "error" if m.is_error else "waiting")
+                chat.set_status(turn_end_status(chat, interrupted=interrupted, is_error=m.is_error))
+            elif isinstance(m, TaskStartedMessage):
+                chat.bg_tasks.add(m.task_id)
+            elif isinstance(m, TaskNotificationMessage | TaskUpdatedMessage):
+                if m.status in TERMINAL_TASK:
+                    chat.bg_tasks.discard(m.task_id)
             elif isinstance(m, SystemMessage):
                 data = m.data or {}
                 if m.subtype == "init":
@@ -699,6 +746,50 @@ class ChatManager:
                             exit_code=data.get("exit_code"),
                             output=tool_text(data.get("stderr") or data.get("output") or data.get("stdout")),
                         )
+
+
+AT_REST = ("background", "waiting", "needs_input", "done")
+
+
+def turn_end_status(chat: Chat, *, interrupted: bool, is_error: bool) -> str:
+    """The status once a turn's result arrives."""
+    if interrupted:
+        return "idle"
+    if is_error:
+        return "error"
+    if chat.bg_tasks:
+        return "background"
+    if chat.declared is not None:
+        chat.status_note = chat.declared[1]
+        return chat.declared[0]
+    return "waiting"
+
+
+def status_server(chat: Chat) -> "McpSdkServerConfig":
+    """An in-process MCP server with the one tool the agent reports its status through."""
+    from claude_agent_sdk import create_sdk_mcp_server, tool
+
+    @tool(
+        "set_chat_status",
+        "Tell the maintainer's PR console why this turn ends: 'needs_input' (you need an answer or decision) "
+        "or 'done' (the task is finished and ready for a PR), with a one-line summary.",
+        {
+            "type": "object",
+            "properties": {
+                "state": {"type": "string", "enum": list(DECLARED)},
+                "summary": {"type": "string"},
+            },
+            "required": ["state", "summary"],
+        },
+    )
+    async def set_chat_status(args: dict[str, Any]) -> dict[str, Any]:
+        state, summary = args.get("state"), args.get("summary")
+        if state not in DECLARED or not isinstance(summary, str):
+            return {"content": [{"type": "text", "text": "state must be needs_input or done"}], "is_error": True}
+        chat.declared = (state, " ".join(summary.split())[:300])
+        return {"content": [{"type": "text", "text": f"status recorded: {state}"}]}
+
+    return create_sdk_mcp_server("console", tools=[set_chat_status])
 
 
 def title_of(prompt: str) -> str:

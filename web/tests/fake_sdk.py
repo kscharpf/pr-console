@@ -10,6 +10,10 @@ the prompt:
   "hook"   a PreToolUse hook that blocks a tool
   "md"     markdown with raw HTML in it
   "fail"   an error result
+  "bg"     starts a background task and ends the turn; when the task finishes, a second turn starts
+           on its own
+  "ask"    reports needs_input through the console's set_chat_status tool
+  "finish" reports done through the same tool
   other    "echo: <prompt>", streamed in two deltas
 """
 
@@ -41,6 +45,8 @@ class FakeTransport(Transport):
         self.waiting: dict[str, asyncio.Future[Msg]] = {}  # request_id -> our can_use_tool requests
         self.turn: asyncio.Task[None] | None = None
         self.interrupted = asyncio.Event()
+        self.bg: asyncio.Task[None] | None = None
+        self.mcp_ready = False
 
     async def connect(self) -> None:
         self.ready = True
@@ -53,8 +59,9 @@ class FakeTransport(Transport):
 
     async def close(self) -> None:
         self.ready = False
-        if self.turn:
-            self.turn.cancel()
+        for t in (self.turn, self.bg):
+            if t:
+                t.cancel()
         await self.out.put(None)
 
     async def read_messages(self) -> AsyncIterator[Msg]:
@@ -141,18 +148,53 @@ class FakeTransport(Transport):
             "terminal_reason": reason,
         }
 
-    async def _ask(self, tid: str, name: str, inp: Msg) -> Msg:
+    async def _control(self, request: Msg) -> Msg:
         rid = "req_" + os.urandom(4).hex()
         fut: asyncio.Future[Msg] = asyncio.get_running_loop().create_future()
         self.waiting[rid] = fut
-        await self.out.put(
-            {
-                "type": "control_request",
-                "request_id": rid,
-                "request": {"subtype": "can_use_tool", "tool_name": name, "input": inp, "tool_use_id": tid},
-            }
-        )
+        await self.out.put({"type": "control_request", "request_id": rid, "request": request})
         return await fut
+
+    async def _ask(self, tid: str, name: str, inp: Msg) -> Msg:
+        return await self._control({"subtype": "can_use_tool", "tool_name": name, "input": inp, "tool_use_id": tid})
+
+    async def _set_status(self, state: str, summary: str) -> None:
+        """Calls the console's in-process set_chat_status tool the way the CLI calls an SDK MCP server."""
+        args = {"state": state, "summary": summary}
+        await self.out.put(
+            self._asst({"type": "tool_use", "id": "toolu_s", "name": "mcp__console__set_chat_status", "input": args})
+        )
+        if not self.mcp_ready:  # the MCP handshake the CLI makes before its first call
+            info = {"name": "fake", "version": "0"}
+            init = {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": info}
+            await self._mcp({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": init})
+            await self._mcp({"jsonrpc": "2.0", "method": "notifications/initialized"})
+            self.mcp_ready = True
+        params = {"name": "set_chat_status", "arguments": args}
+        r = await self._mcp({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": params})
+        text = r.get("mcp_response", {}).get("result", {}).get("content", [{}])[0].get("text", "")
+        await self.out.put(self._tool_result("toolu_s", text))
+
+    async def _mcp(self, message: Msg) -> Msg:
+        return await self._control({"subtype": "mcp_message", "server_name": "console", "message": message})
+
+    def _task(self, subtype: str, **fields: object) -> Msg:
+        return {
+            "type": "system",
+            "subtype": subtype,
+            "task_id": "task_1",
+            "uuid": str(uuid.uuid4()),
+            "session_id": self.session_id,
+            **fields,
+        }
+
+    async def _background(self) -> None:
+        await asyncio.sleep(1.5)
+        await self.out.put(
+            self._task("task_notification", status="completed", output_file="/dev/null", summary="build finished")
+        )
+        await self.out.put(self._asst({"type": "text", "text": "background task finished"}))
+        await self.out.put(self._result())
 
     async def _turn(self, prompt: str) -> None:
         put = self.out.put
@@ -225,6 +267,15 @@ class FakeTransport(Transport):
             for i in range(40):
                 await put(self._asst({"type": "text", "text": f"line {i}\n\n" + "filler text " * 30}))
             await put(self._asst({"type": "text", "text": "LAST LINE"}))
+            await put(self._result())
+        elif word == "bg":
+            await put(self._task("task_started", description="build", task_type="local_bash"))
+            await put(self._asst({"type": "text", "text": "started a build in the background"}))
+            await put(self._result())
+            self.bg = asyncio.create_task(self._background())
+        elif word in ("ask", "finish"):
+            await put(self._asst({"type": "text", "text": "turn over"}))
+            await self._set_status("needs_input" if word == "ask" else "done", f"summary of {word}")
             await put(self._result())
         elif word == "fail":
             await put(self._result("success", True, "completed", "API Error: 529 overloaded"))

@@ -863,6 +863,7 @@ class ChatRow(TypedDict):
     permission_mode: str
     resume_id: str | None
     status: str
+    status_note: str
     connected: bool
     last_activity: float
     pending: list["C.PendingPermission"]

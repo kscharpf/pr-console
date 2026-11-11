@@ -57,7 +57,7 @@ test("launch streams the reply; a follow-up continues; no CSP errors", async ({ 
   await launch(page, "hello there");
   await expect(pane(page)).toContainText("opus · auto · id");
   await expect(pane(page).getByTestId("msg-assistant").last()).toHaveText("echo: hello there");
-  await expect(status(page)).toHaveText("waiting for you");
+  await expect(status(page)).toHaveText("turn ended");
   await expect(pane(page).getByTestId("msg-result")).toHaveCount(1);
 
   await page.getByTestId("chat-input").fill("second question");
@@ -86,6 +86,35 @@ test("interrupt stops a streaming turn", async ({ page }) => {
   expect(ctx.errors).toEqual([]);
 });
 
+test("a turn that leaves a background task shows it, then runs again on its own", async ({ page }) => {
+  const ctx = await open(page);
+  await launch(page, "bg");
+  await expect(status(page)).toHaveText("working in background");
+  await expect(pane(page).getByTestId("msg-assistant").last()).toHaveText("background task finished");
+  await expect(status(page)).toHaveText("turn ended");
+  await page.getByTestId("chat-end").click(); // free a live slot (MAX_LIVE) for later tests
+  await expect(status(page)).toHaveText("ended");
+  expect(ctx.errors).toEqual([]);
+});
+
+test("the agent's set_chat_status shows needs input or done, with its summary", async ({ page }) => {
+  const ctx = await open(page);
+  await launch(page, "ask");
+  await expect(status(page)).toHaveText("needs your input");
+  await status(page).hover();
+  await expect(page.getByRole("tooltip")).toHaveText("summary of ask");
+  await page.getByTestId("chat-input").fill("finish");
+  await page.getByTestId("chat-send").click();
+  await expect(status(page)).toHaveText("done: ready for PR");
+  // a plain turn reports nothing: back to the fallback
+  await page.getByTestId("chat-input").fill("plain");
+  await page.getByTestId("chat-send").click();
+  await expect(status(page)).toHaveText("turn ended");
+  await page.getByTestId("chat-end").click(); // free a live slot (MAX_LIVE) for later tests
+  await expect(status(page)).toHaveText("ended");
+  expect(ctx.errors).toEqual([]);
+});
+
 test("permission: Deny has the focus and sends deny; Allow sends allow", async ({ page }) => {
   const ctx = await open(page);
   const id = await launch(page, "perm");
@@ -99,7 +128,7 @@ test("permission: Deny has the focus and sends deny; Allow sends allow", async (
   await expect(pane(page).getByTestId("msg-permission")).toHaveText("permission for Bash: denied");
   await pane(page).getByTestId("tool-result").locator("summary").click();
   await expect(pane(page).getByTestId("tool-result")).toContainText("denied: The maintainer denied this");
-  await expect(status(page)).toHaveText("waiting for you");
+  await expect(status(page)).toHaveText("turn ended");
 
   ctx.decisions.length = 0;
   await page.getByTestId("chat-input").fill("perm again");
@@ -200,14 +229,14 @@ test("switching chats keeps each one's state; the stream resumes after the last 
 test("ending a chat, then resuming it by sending", async ({ page }) => {
   const ctx = await open(page);
   await launch(page, "first");
-  await expect(status(page)).toHaveText("waiting for you");
+  await expect(status(page)).toHaveText("turn ended");
   await page.getByTestId("chat-end").click();
   await expect(status(page)).toHaveText("ended");
   await expect(page.getByTestId("chat-resume")).toBeVisible();
   await page.getByTestId("chat-input").fill("after the end");
   await page.getByTestId("chat-send").click();
   await expect(pane(page).getByTestId("msg-assistant").last()).toHaveText("echo: after the end");
-  await expect(status(page)).toHaveText("waiting for you");
+  await expect(status(page)).toHaveText("turn ended");
   expect(ctx.errors).toEqual([]);
 });
 
@@ -218,7 +247,7 @@ test("deleting a chat: only when ended, through a modal that names the request",
     if (c.status !== "ended") await request.post(`/api/chats/${c.id}/end`, { headers: h, data: {} });
   const ctx = await open(page);
   const id = await launch(page, "to delete");
-  await expect(status(page)).toHaveText("waiting for you");
+  await expect(status(page)).toHaveText("turn ended");
   // A connected session cannot be deleted: the button is off and the server refuses.
   await expect(page.getByTestId("chat-delete")).toBeDisabled();
   expect((await request.post(`/api/chats/${id}/delete`, { headers: h, data: {} })).status()).toBe(400);
@@ -404,7 +433,7 @@ test("resizable handles adjust chat list, chat pane, and log panel without CSP e
   const ctx = await open(page);
   await launch(page, "resize test");
   await expect(pane(page).getByTestId("msg-assistant").last()).toHaveText("echo: resize test");
-  await expect(status(page)).toHaveText("waiting for you");
+  await expect(status(page)).toHaveText("turn ended");
 
   const chatsSplitter = page.getByTestId("chats-splitter");
   const logSplitter = page.getByTestId("log-splitter");

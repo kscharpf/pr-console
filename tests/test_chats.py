@@ -320,3 +320,28 @@ class CoordinatorRole(unittest.TestCase):
         with tempfile.TemporaryDirectory() as t:
             m = C.ChatManager(t, client_factory=no_client, prompt_append="ROLE")
             self.assertEqual(m.prompt_append, "ROLE")
+
+
+class TurnEndStatus(unittest.TestCase):
+    def chat(self) -> C.Chat:
+        meta: C.ChatMeta = {
+            "id": "x",
+            "cwd": "/",
+            "created": 0.0,
+            "title": "t",
+            "model": "",
+            "permission_mode": "auto",
+            "resume_id": None,
+        }
+        return C.Chat(meta, C.EventBuffer(None))
+
+    def test_order_of_precedence(self) -> None:
+        c = self.chat()
+        self.assertEqual(C.turn_end_status(c, interrupted=False, is_error=False), "waiting")
+        c.declared = ("done", "ready")
+        self.assertEqual(C.turn_end_status(c, interrupted=False, is_error=False), "done")
+        self.assertEqual(c.status_note, "ready")
+        c.bg_tasks.add("t1")  # a background task outranks what the agent declared
+        self.assertEqual(C.turn_end_status(c, interrupted=False, is_error=False), "background")
+        self.assertEqual(C.turn_end_status(c, interrupted=False, is_error=True), "error")
+        self.assertEqual(C.turn_end_status(c, interrupted=True, is_error=False), "idle")
