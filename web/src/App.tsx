@@ -140,12 +140,12 @@ function Console() {
       {/* No AppShell: it injects an inline <style>, which the CSP refuses. */}
       <header className="header">
         <Group justify="space-between" wrap="nowrap" className="header-inner">
-            <Group gap="lg" wrap="nowrap">
-              <Title order={3}>PR console</Title>
-              <Text size="sm" c="dimmed" data-testid="repo-name">
+            <Group gap="lg" wrap="nowrap" className="header-left">
+              <Title order={3} className="header-title">PR console</Title>
+              <Text size="sm" c="dimmed" data-testid="repo-name" className="header-repo">
                 {cfg.gh_repo}
               </Text>
-              <Tabs value={tab} onChange={(v) => setTab(v ?? "prs")} variant="pills">
+              <Tabs value={tab} onChange={(v) => setTab(v ?? "prs")} variant="pills" className="header-tabs">
                 <Tabs.List>
                   <Tabs.Tab value="prs">All PRs</Tabs.Tab>
                   <Tabs.Tab value="sessions">Sessions</Tabs.Tab>
@@ -154,8 +154,8 @@ function Console() {
                 </Tabs.List>
               </Tabs>
             </Group>
-            <Group gap="sm" wrap="nowrap">
-              <Text size="sm" c="dimmed" data-testid="meta">
+            <Group gap="sm" wrap="nowrap" className="header-right">
+              <Text size="sm" c="dimmed" data-testid="meta" className="header-meta">
                 {meta}
               </Text>
               <Button variant="default" size="xs" onClick={() => void refresh()} loading={refreshing} data-testid="refresh">

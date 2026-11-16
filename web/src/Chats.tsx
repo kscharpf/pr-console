@@ -3,6 +3,7 @@ import { memo, useEffect, useLayoutEffect, useRef, useState, type ReactNode } fr
 import { api } from "./api";
 import { useChats, type ChatState } from "./chatStore";
 import { useConfig } from "./config";
+import { useNarrow } from "./useNarrow";
 import { useDialogs } from "./dialogs";
 import { Markdown } from "./Markdown";
 import { SCROLL } from "./scroll";
@@ -33,6 +34,7 @@ export function Chats({ onOpenPr }: { onOpenPr: (n: number) => void }) {
   const { rows, error, selected, select } = useChats();
   const [launching, setLaunching] = useState(false);
   const cur = rows.find((r) => r.id === selected) ?? null;
+  const narrow = useNarrow();
   const [listWidth, setListWidth] = useState<number | null>(() => savedListWidth);
   const [isDragging, setIsDragging] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -126,6 +128,7 @@ export function Chats({ onOpenPr }: { onOpenPr: (n: number) => void }) {
 
   return (
     <div className="chats" data-testid="chats" ref={containerRef}>
+      {!(narrow && cur) && (
       <div
         className="chats-list"
         style={{
@@ -158,6 +161,7 @@ export function Chats({ onOpenPr }: { onOpenPr: (n: number) => void }) {
           ))}
         </Stack>
       </div>
+      )}
       <div
         className={`chats-splitter${isDragging ? " chats-splitter-active" : ""}`}
         data-testid="chats-splitter"
@@ -175,13 +179,22 @@ export function Chats({ onOpenPr }: { onOpenPr: (n: number) => void }) {
       >
         <div className="chats-splitter-bar" />
       </div>
-      <div className="chats-pane">
-        {cur ? (
-          <ChatPane key={cur.id} r={cur} onOpenPr={onOpenPr} />
-        ) : (
-          <Text c="dimmed">Choose a chat, or start a new one.</Text>
-        )}
-      </div>
+      {!(narrow && !cur) && (
+        <div className="chats-pane">
+          {cur ? (
+            <>
+              {narrow && (
+                <Button variant="default" size="xs" mb="xs" onClick={() => select(null)} data-testid="chat-back">
+                  ← All chats
+                </Button>
+              )}
+              <ChatPane key={cur.id} r={cur} onOpenPr={onOpenPr} />
+            </>
+          ) : (
+            <Text c="dimmed">Choose a chat, or start a new one.</Text>
+          )}
+        </div>
+      )}
     </div>
   );
 }
