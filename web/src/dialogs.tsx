@@ -94,7 +94,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
         data-testid="dialog"
       >
         <Stack gap="sm">
-          {open?.type === "notify" && <Text style={{ whiteSpace: "pre-wrap" }}>{open.message}</Text>}
+          {open?.type === "notify" && <Text className="pre-wrap-text">{open.message}</Text>}
           {opts?.message && <div>{opts.message}</div>}
           {opts?.output !== undefined && (
             <ScrollArea.Autosize mah="40vh" type="auto">

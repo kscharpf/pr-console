@@ -1,8 +1,9 @@
-import { Anchor, Badge, Button, Checkbox, Code, Group, Stack, Table, Text, Tooltip } from "@mantine/core";
+import { Anchor, Badge, Button, Card, Checkbox, Code, Group, Stack, Table, Text, Tooltip } from "@mantine/core";
 import { memo } from "react";
 import { useDialogs } from "./dialogs";
 import { useJobs } from "./jobs";
 import { enabled, useConfig } from "./config";
+import { useNarrow } from "./useNarrow";
 import { age, canTrain, isRunError, reviewColor, runColor, verdictColor } from "./status";
 import { commandFor, type ActionBody, type PrRow } from "./types";
 
@@ -13,6 +14,8 @@ interface Props {
 }
 
 export function PrTable({ prs, picked, onPick }: Props) {
+  const narrow = useNarrow();
+  if (narrow) return <PrCards prs={prs} picked={picked} onPick={onPick} />;
   return (
     <Table.ScrollContainer minWidth={1100}>
       <Table striped highlightOnHover verticalSpacing="xs" data-testid="pr-table">
@@ -80,33 +83,7 @@ const PrRowView = memo(function PrRowView({ p, picked, onPick }: { p: PrRow; pic
             </Badge>
           )}
         </Text>
-        {p.is_train && (
-          <Stack gap={2} mt={4}>
-            <Text size="xs" c="dimmed">
-              constituents: {p.constituents.length ? p.constituents.map((c) => `#${c}`).join(", ") : "none found"}
-            </Text>
-            <Group gap={4}>
-              <Text size="xs" c="dimmed">
-                verify:
-              </Text>
-              {p.verify_run === null ? (
-                <Text size="xs" c="dimmed">
-                  no run
-                </Text>
-              ) : isRunError(p.verify_run) ? (
-                <Text size="xs" c="red">
-                  {p.verify_run.error}
-                </Text>
-              ) : (
-                <Anchor href={p.verify_run.url} target="_blank" rel="noreferrer" size="xs">
-                  <Badge size="xs" color={runColor(p.verify_run)} variant="light">
-                    {p.verify_run.status}/{p.verify_run.conclusion || "-"}
-                  </Badge>
-                </Anchor>
-              )}
-            </Group>
-          </Stack>
-        )}
+        {p.is_train && <TrainInfo p={p} />}
       </Table.Td>
       <Table.Td className="nowrap">
         <Code>{p.branch}</Code>
@@ -260,3 +237,119 @@ function Actions({ p }: { p: PrRow }) {
     </Group>
   );
 }
+
+function TrainInfo({ p }: { p: PrRow }) {
+  return (
+    <Stack gap={2} mt={4}>
+      <Text size="xs" c="dimmed">
+        constituents: {p.constituents.length ? p.constituents.map((c) => `#${c}`).join(", ") : "none found"}
+      </Text>
+      <Group gap={4}>
+        <Text size="xs" c="dimmed">
+          verify:
+        </Text>
+        {p.verify_run === null ? (
+          <Text size="xs" c="dimmed">
+            no run
+          </Text>
+        ) : isRunError(p.verify_run) ? (
+          <Text size="xs" c="red">
+            {p.verify_run.error}
+          </Text>
+        ) : (
+          <Anchor href={p.verify_run.url} target="_blank" rel="noreferrer" size="xs">
+            <Badge size="xs" color={runColor(p.verify_run)} variant="light">
+              {p.verify_run.status}/{p.verify_run.conclusion || "-"}
+            </Badge>
+          </Anchor>
+        )}
+      </Group>
+    </Stack>
+  );
+}
+
+/** Phone layout: one card per PR, with the same test ids as the table row. */
+function PrCards({ prs, picked, onPick }: Props) {
+  return (
+    <Stack gap="sm" data-testid="pr-cards">
+      {prs.length === 0 && <Text c="dimmed">No open pull requests (yet).</Text>}
+      {prs.map((p) => (
+        <PrCard key={p.number} p={p} picked={picked.includes(p.number)} onPick={onPick} />
+      ))}
+    </Stack>
+  );
+}
+
+const PrCard = memo(function PrCard({ p, picked, onPick }: { p: PrRow; picked: boolean; onPick: Props["onPick"] }) {
+  const cfg = useConfig();
+  const v = p.status;
+  const rv = p.review;
+  return (
+    <Card withBorder padding="sm" className="pr-card" data-testid={`pr-${p.number}`}>
+      <Stack gap={6}>
+        <Group gap="xs" wrap="nowrap" align="flex-start">
+          {canTrain(cfg, p) && (
+            <Checkbox
+              checked={picked}
+              onChange={(e) => onPick(p.number, e.currentTarget.checked)}
+              aria-label={`Add #${p.number} to the train`}
+              data-testid={`pick-${p.number}`}
+            />
+          )}
+          <Text size="sm" className="pr-card-title">
+            <b>#{p.number}</b>{" "}
+            <span data-testid={`title-${p.number}`}>{p.title}</span>{" "}
+            <Anchor size="xs" href={`${p.url}/files`} target="_blank" rel="noreferrer" data-testid={`diff-${p.number}`}>
+              diff ↗
+            </Anchor>{" "}
+            {p.draft && (
+              <Badge size="xs" color="gray" variant="outline">
+                draft
+              </Badge>
+            )}
+          </Text>
+        </Group>
+        <Group gap="xs">
+          <Badge color={verdictColor(cfg, v?.verdict)} variant="filled" className="nowrap" data-testid={`verdict-${p.number}`}>
+            {v?.verdict ?? "…"}
+          </Badge>
+          <Badge size="sm" variant="light" color={reviewColor(rv.state)}>
+            review: {rv.state}
+          </Badge>
+          {rv.state !== "NONE" && (
+            <Text size="xs" c={rv.answered ? "green" : "red"} fw={rv.answered ? undefined : 700}>
+              {rv.answered ? "answered" : "unanswered"}
+            </Text>
+          )}
+        </Group>
+        {v && v.reasons.length > 0 && (
+          <Text size="xs" c="dimmed">
+            {v.reasons.join("; ")}
+          </Text>
+        )}
+        <Group gap="xs">
+          <Code className="pr-card-branch">{p.branch}</Code>
+          {p.scope && (
+            <Text size="xs" c="dimmed">
+              {p.scope}
+            </Text>
+          )}
+        </Group>
+        <Text size="xs" c="dimmed">
+          {p.author} · <Code>{p.head.slice(0, 7)}</Code> · {age(p.created_at)}
+        </Text>
+        {p.labels.length > 0 && (
+          <Group gap={4}>
+            {p.labels.map((l) => (
+              <Badge key={l} size="sm" variant="outline" color={l === cfg.conventions.maintainer_label ? "orange" : "gray"}>
+                {l}
+              </Badge>
+            ))}
+          </Group>
+        )}
+        {p.is_train && <TrainInfo p={p} />}
+        <Actions p={p} />
+      </Stack>
+    </Card>
+  );
+});

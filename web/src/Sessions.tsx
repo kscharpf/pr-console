@@ -5,11 +5,13 @@ import { enabled, useConfig } from "./config";
 import { useDialogs } from "./dialogs";
 import { shortPath } from "./status";
 import { useJobs } from "./jobs";
+import { useNarrow } from "./useNarrow";
 import { commandFor, type SessionsResponse, type Worktree } from "./types";
 
 
 export function Sessions() {
   const cfg = useConfig();
+  const narrow = useNarrow();
   const showReverify = cfg.commands.reverify_status !== undefined || cfg.conventions.reverify_lock_dir !== undefined;
   const [data, setData] = useState<SessionsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -47,6 +49,13 @@ export function Sessions() {
             <Title order={5} mb="xs">
               {group}
             </Title>
+            {narrow ? (
+              <Stack gap="xs">
+                {wts.map((w) => (
+                  <WorktreeCard key={w.path} w={w} onDone={load} />
+                ))}
+              </Stack>
+            ) : (
             <Table.ScrollContainer minWidth={800}>
               <Table verticalSpacing={4}>
                 <Table.Thead>
@@ -66,6 +75,7 @@ export function Sessions() {
                 </Table.Tbody>
               </Table>
             </Table.ScrollContainer>
+            )}
           </Card>
         ))}
       {data && showReverify && (
@@ -111,7 +121,7 @@ export function Sessions() {
   );
 }
 
-function WorktreeRow({ w, onDone }: { w: Worktree; onDone: () => Promise<void> }) {
+function useCleanup(w: Worktree, onDone: () => Promise<void>) {
   const cfg = useConfig();
   const { confirm, notify } = useDialogs();
   const { run } = useJobs();
@@ -153,6 +163,77 @@ function WorktreeRow({ w, onDone }: { w: Worktree; onDone: () => Promise<void> }
     }
   };
 
+  return { busy, cleanup };
+}
+
+const prLabel = (w: Worktree) => (w.open_pr ? `#${w.open_pr} open` : w.merged_pr ? `#${w.merged_pr} merged` : "");
+
+function LockInfo({ w }: { w: Worktree }) {
+  return (
+    <Text size="xs">
+      {w.lock_reason}{" "}
+      {w.claude_lock && (
+        <Badge size="xs" color={w.claude_lock.alive ? "green" : "gray"}>
+          {w.claude_lock.alive ? "alive" : "pid gone"}
+        </Badge>
+      )}
+    </Text>
+  );
+}
+
+function DirtyBadge({ w }: { w: Worktree }) {
+  return w.dirty === null ? (
+    <Badge color="gray">?</Badge>
+  ) : w.dirty ? (
+    <Badge color="orange">dirty</Badge>
+  ) : (
+    <Badge color="green" variant="light">
+      clean
+    </Badge>
+  );
+}
+
+function WorktreeActions({ w, busy, cleanup, wrap }: { w: Worktree; busy: boolean; cleanup: () => Promise<void>; wrap: boolean }) {
+  const cfg = useConfig();
+  return (
+    <Group gap={4} wrap={wrap ? "wrap" : "nowrap"}>
+      {w.ready_to_clean && (
+        <Badge color="green" variant="filled">
+          ready to clean up
+        </Badge>
+      )}
+      {w.branch && !w.is_main && enabled(cfg, "cleanup") && (
+        <Button size="compact-xs" variant="outline" color="red" loading={busy} onClick={() => void cleanup()} data-testid={`cleanup-${w.branch}`}>
+          cleanup…
+        </Button>
+      )}
+    </Group>
+  );
+}
+
+/** Phone layout: one card per worktree instead of a table row. */
+function WorktreeCard({ w, onDone }: { w: Worktree; onDone: () => Promise<void> }) {
+  const cfg = useConfig();
+  const { busy, cleanup } = useCleanup(w, onDone);
+  return (
+    <Card withBorder padding="xs" data-testid={`wt-${w.branch || w.path}`}>
+      <Stack gap={4}>
+        <Code className="pr-card-branch">{shortPath(cfg, w.path)}</Code>
+        <Group gap="xs">
+          <Code className="pr-card-branch">{w.branch || (w.detached ? "(detached)" : "")}</Code>
+          {prLabel(w) && <Text size="sm">{prLabel(w)}</Text>}
+          <DirtyBadge w={w} />
+        </Group>
+        {w.locked && <LockInfo w={w} />}
+        <WorktreeActions w={w} busy={busy} cleanup={cleanup} wrap />
+      </Stack>
+    </Card>
+  );
+}
+
+function WorktreeRow({ w, onDone }: { w: Worktree; onDone: () => Promise<void> }) {
+  const cfg = useConfig();
+  const { busy, cleanup } = useCleanup(w, onDone);
   return (
     <Table.Tr data-testid={`wt-${w.branch || w.path}`}>
       <Table.Td>
@@ -161,43 +242,13 @@ function WorktreeRow({ w, onDone }: { w: Worktree; onDone: () => Promise<void> }
       <Table.Td>
         <Code>{w.branch || (w.detached ? "(detached)" : "")}</Code>
       </Table.Td>
-      <Table.Td>{w.open_pr ? `#${w.open_pr} open` : w.merged_pr ? `#${w.merged_pr} merged` : ""}</Table.Td>
+      <Table.Td>{prLabel(w)}</Table.Td>
+      <Table.Td>{w.locked && <LockInfo w={w} />}</Table.Td>
       <Table.Td>
-        {w.locked && (
-          <Text size="xs">
-            {w.lock_reason}{" "}
-            {w.claude_lock && (
-              <Badge size="xs" color={w.claude_lock.alive ? "green" : "gray"}>
-                {w.claude_lock.alive ? "alive" : "pid gone"}
-              </Badge>
-            )}
-          </Text>
-        )}
+        <DirtyBadge w={w} />
       </Table.Td>
       <Table.Td>
-        {w.dirty === null ? (
-          <Badge color="gray">?</Badge>
-        ) : w.dirty ? (
-          <Badge color="orange">dirty</Badge>
-        ) : (
-          <Badge color="green" variant="light">
-            clean
-          </Badge>
-        )}
-      </Table.Td>
-      <Table.Td>
-        <Group gap={4} wrap="nowrap">
-          {w.ready_to_clean && (
-            <Badge color="green" variant="filled">
-              ready to clean up
-            </Badge>
-          )}
-          {w.branch && !w.is_main && enabled(cfg, "cleanup") && (
-            <Button size="compact-xs" variant="outline" color="red" loading={busy} onClick={() => void cleanup()} data-testid={`cleanup-${w.branch}`}>
-              cleanup…
-            </Button>
-          )}
-        </Group>
+        <WorktreeActions w={w} busy={busy} cleanup={cleanup} wrap={false} />
       </Table.Td>
     </Table.Tr>
   );

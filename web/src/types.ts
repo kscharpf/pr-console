@@ -268,7 +268,17 @@ export type PermissionMode = (typeof PERMISSION_MODES)[number];
 export const MODELS = ["opus", "sonnet", "haiku", ""] as const;
 export type Model = (typeof MODELS)[number];
 
-export type ChatStatus = "starting" | "running" | "waiting" | "permission" | "idle" | "ended" | "error";
+export type ChatStatus =
+  | "starting"
+  | "running"
+  | "background"
+  | "waiting"
+  | "needs_input"
+  | "done"
+  | "permission"
+  | "idle"
+  | "ended"
+  | "error";
 
 /** A can_use_tool request waiting for the maintainer. */
 export interface PendingPermission {
@@ -293,6 +303,8 @@ export interface ChatRow {
   permission_mode: PermissionMode;
   resume_id: string | null;
   status: ChatStatus;
+  /** The agent's one-line summary with "needs_input" or "done"; empty otherwise. */
+  status_note: string;
   /** A session is starting or running; only an unconnected chat can be deleted. */
   connected: boolean;
   last_activity: number;

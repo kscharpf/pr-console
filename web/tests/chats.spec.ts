@@ -126,6 +126,7 @@ test("permission: Deny has the focus and sends deny; Allow sends allow", async (
   await expect(page.getByTestId("permission-input")).toBeHidden();
   await expect.poll(() => ctx.decisions).toEqual([{ req_id: expect.stringMatching(/^[0-9a-f]{16}$/), allow: false }]);
   await expect(pane(page).getByTestId("msg-permission")).toHaveText("permission for Bash: denied");
+  await pane(page).getByTestId("tool-group-summary").click();
   await pane(page).getByTestId("tool-result").locator("summary").click();
   await expect(pane(page).getByTestId("tool-result")).toContainText("denied: The maintainer denied this");
   await expect(status(page)).toHaveText("turn ended");
@@ -136,9 +137,28 @@ test("permission: Deny has the focus and sends deny; Allow sends allow", async (
   await expect(page.getByTestId("permission-tool")).toHaveText("Bash");
   await page.getByTestId("permission-allow").click();
   await expect.poll(() => ctx.decisions).toEqual([{ req_id: expect.stringMatching(/^[0-9a-f]{16}$/), allow: true }]);
+  await pane(page).getByTestId("tool-group-summary").last().click();
   await expect(pane(page).getByTestId("tool-result").last()).toContainText("ran ls -la");
   await expect(pane(page).getByTestId("msg-assistant").last()).toHaveText("permission flow finished");
   expect(id).toMatch(/^[0-9a-f-]{36}$/);
+  expect(ctx.errors).toEqual([]);
+});
+
+test("back-to-back tool calls collapse into one summary line", async ({ page }) => {
+  const ctx = await open(page);
+  await launch(page, "perm2");
+  await page.getByTestId("permission-allow").click();
+  await page.getByTestId("permission-allow").click();
+  await expect(pane(page).getByTestId("msg-assistant").last()).toHaveText("permission flow finished");
+  const sum = pane(page).getByTestId("tool-group-summary");
+  await expect(sum).toHaveCount(1);
+  await expect(sum).toHaveText(/^2 tool calls: Bash ×2\s*$/);
+  await expect(pane(page).getByTestId("msg-tool")).toHaveCount(2);
+  await expect(pane(page).getByTestId("msg-tool").first()).toBeHidden();
+  await sum.click();
+  await expect(pane(page).getByTestId("msg-tool").first()).toBeVisible();
+  await page.getByTestId("chat-end").click(); // free a live slot (MAX_LIVE) for later tests
+  await expect(status(page)).toHaveText("ended");
   expect(ctx.errors).toEqual([]);
 });
 
@@ -163,7 +183,8 @@ test("hook blocks and errors show in the chat; markdown renders without raw HTML
   const ctx = await open(page);
   await launch(page, "hook");
   await expect(pane(page).getByTestId("msg-hook")).toContainText("background jobs (&) are blocked");
-  await expect(pane(page).getByTestId("msg-tool")).toContainText("error");
+  await expect(pane(page).getByTestId("tool-group-summary")).toHaveText(/1 tool call: Bash\s+1 error/);
+  await expect(pane(page).getByTestId("msg-tool")).toBeHidden();
 
   await page.getByTestId("chat-input").fill("fail");
   await page.getByTestId("chat-send").click();

@@ -1,10 +1,19 @@
 import { ActionIcon, Badge, Code, Group, Paper, Text } from "@mantine/core";
 import { useEffect, useRef, useState } from "react";
 import { useJobs } from "./jobs";
+import { useNarrow } from "./useNarrow";
 
 export function LogPanel() {
   const { current } = useJobs();
-  const [collapsed, setCollapsed] = useState(false);
+  const narrow = useNarrow();
+  // On a phone the log starts collapsed and opens when an action starts.
+  const [collapsed, setCollapsed] = useState(narrow);
+  const jobId = current?.id;
+  const [seenJob, setSeenJob] = useState(jobId);
+  if (jobId !== seenJob) {
+    setSeenJob(jobId);
+    if (jobId !== undefined) setCollapsed(false);
+  }
   const [height, setHeight] = useState<number | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
