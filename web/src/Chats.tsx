@@ -388,8 +388,74 @@ function Activity({ s, status, lastActivity }: { s: ChatState; status: ChatStatu
   );
 }
 
+type ToolUse = Extract<ChatEvent, { kind: "tool_use" }>;
+type ToolResult = Extract<ChatEvent, { kind: "tool_result" }>;
+
+/** A run of back-to-back tool calls, collapsed to one line so the decisions around it stay readable. */
+function ToolGroup({ calls, results }: { calls: ToolUse[]; results: Map<string, ToolResult> }) {
+  const counts = new Map<string, number>();
+  for (const c of calls) counts.set(c.name, (counts.get(c.name) ?? 0) + 1);
+  const errors = calls.filter((c) => results.get(c.tool_use_id)?.is_error).length;
+  const pending = calls.filter((c) => !results.has(c.tool_use_id)).length;
+  return (
+    <details className="tool-group" data-testid="tool-group">
+      <summary data-testid="tool-group-summary">
+        {calls.length} tool call{calls.length === 1 ? "" : "s"}:{" "}
+        {[...counts].map(([n, k]) => (k > 1 ? `${n} ×${k}` : n)).join(", ")}{" "}
+        {errors > 0 && (
+          <Badge size="xs" color="red" variant="light">
+            {errors} error{errors === 1 ? "" : "s"}
+          </Badge>
+        )}{" "}
+        {pending > 0 && (
+          <Badge size="xs" color="gray" variant="light">
+            pending
+          </Badge>
+        )}
+      </summary>
+      <Stack gap={4} mt={4}>
+        {calls.map((e) => (
+          <ToolCard key={e.id} e={e} res={results.get(e.tool_use_id)} />
+        ))}
+      </Stack>
+    </details>
+  );
+}
+
+function ToolCard({ e, res }: { e: ToolUse; res: ToolResult | undefined }) {
+  return (
+    <div className="msg msg-tool" data-testid="msg-tool">
+      <Text size="sm">
+        <Code>{e.name}</Code>{" "}
+        {res === undefined ? (
+          <Badge size="xs" color="gray" variant="light">
+            pending
+          </Badge>
+        ) : res.is_error ? (
+          <Badge size="xs" color="red" variant="light">
+            error
+          </Badge>
+        ) : (
+          <Badge size="xs" color="green" variant="light">
+            done
+          </Badge>
+        )}
+      </Text>
+      <Code block className="tool-input">
+        {JSON.stringify(e.input, null, 2)}
+      </Code>
+      {res !== undefined && (
+        <details data-testid="tool-result">
+          <summary>result</summary>
+          <Code block>{res.content || "(empty)"}</Code>
+        </details>
+      )}
+    </div>
+  );
+}
+
 const EventList = memo(function EventList({ events }: { events: ChatEvent[] }) {
-  const results = new Map<string, Extract<ChatEvent, { kind: "tool_result" }>>();
+  const results = new Map<string, ToolResult>();
   const decided = new Map<string, boolean>();
   for (const e of events) {
     if (e.kind === "tool_result") results.set(e.tool_use_id, e);
@@ -397,7 +463,19 @@ const EventList = memo(function EventList({ events }: { events: ChatEvent[] }) {
   }
   const out: ReactNode[] = [];
   // Every message carries the time it arrived, so a quiet session reads as quiet, not hung.
-  const push = (e: ChatEvent, node: ReactNode) =>
+  let group: ToolUse[] = [];
+  const flush = () => {
+    const g = group;
+    const first = g[0];
+    if (first === undefined) return;
+    group = [];
+    row(first, <ToolGroup key={`g-${first.id}`} calls={g} results={results} />);
+  };
+  const push = (e: ChatEvent, node: ReactNode) => {
+    flush();
+    row(e, node);
+  };
+  const row = (e: ChatEvent, node: ReactNode) =>
     out.push(
       <div key={`row-${e.id}`} className="msg-row">
         <Stamp t={e.t} />
@@ -423,40 +501,9 @@ const EventList = memo(function EventList({ events }: { events: ChatEvent[] }) {
           </div>,
         );
         break;
-      case "tool_use": {
-        const res = results.get(e.tool_use_id);
-        push(
-          e,
-          <div key={k} className="msg msg-tool" data-testid="msg-tool">
-            <Text size="sm">
-              <Code>{e.name}</Code>{" "}
-              {res === undefined ? (
-                <Badge size="xs" color="gray" variant="light">
-                  pending
-                </Badge>
-              ) : res.is_error ? (
-                <Badge size="xs" color="red" variant="light">
-                  error
-                </Badge>
-              ) : (
-                <Badge size="xs" color="green" variant="light">
-                  done
-                </Badge>
-              )}
-            </Text>
-            <Code block className="tool-input">
-              {JSON.stringify(e.input, null, 2)}
-            </Code>
-            {res !== undefined && (
-              <details data-testid="tool-result">
-                <summary>result</summary>
-                <Code block>{res.content || "(empty)"}</Code>
-              </details>
-            )}
-          </div>,
-        );
+      case "tool_use":
+        group.push(e);
         break;
-      }
       case "permission": {
         const d = decided.get(e.req_id);
         push(
@@ -509,6 +556,7 @@ const EventList = memo(function EventList({ events }: { events: ChatEvent[] }) {
         break;
     }
   }
+  flush();
   return <>{out}</>;
 });
 
